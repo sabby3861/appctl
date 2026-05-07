@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+.appctl.toml
+*.p8
+
+# Editor / tooling local state
+.claude/
+.vscode/
+.idea/

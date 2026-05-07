@@ -4,16 +4,18 @@ on:
   pull_request: { branches: [main] }
 jobs:
   test:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16 by default, which provides Swift 6 and the
+    # `Testing` framework that the test target depends on.
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: swift --version
       - run: swift build -c debug
       - run: swift test --parallel
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: swift build -c release
       - run: .build/release/appctl version --short

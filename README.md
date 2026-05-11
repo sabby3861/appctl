@@ -1,8 +1,45 @@
 # appctl
 
+[![CI](https://github.com/sabby3861/appctl/actions/workflows/ci.yml/badge.svg)](https://github.com/sabby3861/appctl/actions/workflows/ci.yml)
+[![Swift 6.0+](https://img.shields.io/badge/Swift-6.0%2B-orange?logo=swift&logoColor=white)](https://swift.org)
+[![Platform: macOS 13+](https://img.shields.io/badge/Platform-macOS%2013%2B-blue)](https://www.apple.com/macos)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **The Swift CLI for App Store Connect. Zero Ruby. Zero friction.**
 
 A single, fast binary that replaces Fastlane's 67-gem Ruby toolchain. Talks directly to the App Store Connect API with three-part error diagnostics, automatic retry, and CI-ready output.
+
+## Demo
+
+<!--
+TODO: replace this block with the captured demo.
+
+  Option A (recommended) — asciinema:
+    brew install asciinema
+    asciinema rec demo.cast \
+      --command "appctl workflow release --version 1.2.0 --dry-run" \
+      --idle-time-limit 1
+    asciinema upload demo.cast    # returns an https://asciinema.org/a/<id> URL
+
+  Embed:
+    [![asciicast](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>)
+
+  Option B — VHS-produced GIF (deterministic, no network):
+    brew install charmbracelet/tap/vhs
+    cat > assets/demo.tape <<'EOF'
+    Output assets/demo.gif
+    Set FontSize 14
+    Set Width 900
+    Set Height 540
+    Type "appctl workflow release --version 1.2.0 --dry-run"
+    Enter
+    Sleep 4s
+    EOF
+    vhs assets/demo.tape
+
+  Embed:
+    ![Demo](assets/demo.gif)
+-->
 
 ## Quick Start
 

@@ -21,7 +21,21 @@ struct FixtureClient: AppStoreConnectClient {
     }
 
     func post<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
-        try decode(fixture(method: "POST", path: path), for: path)
+        // The build-upload reservation echoes the caller's fileSize back as the single
+        // upload operation's length; a hardcoded length would fail the service's
+        // exact-range read for any real archive.
+        if path == "buildUploadFiles", let size = Self.requestedFileSize(from: body) {
+            return try decode(Data(Self.buildUploadFile(fileSize: size).utf8), for: path)
+        }
+        return try decode(fixture(method: "POST", path: path), for: path)
+    }
+
+    private static func requestedFileSize(from body: Encodable & Sendable) -> Int64? {
+        guard let data = try? JSONEncoder().encode(FixtureEncodableBox(body)),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let attributes = (object["data"] as? [String: Any])?["attributes"] as? [String: Any]
+        else { return nil }
+        return (attributes["fileSize"] as? NSNumber)?.int64Value
     }
 
     func patch<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
@@ -31,6 +45,7 @@ struct FixtureClient: AppStoreConnectClient {
     func delete(_ path: String) async throws {}
     func postVoid(_ path: String, body: Encodable & Sendable) async throws {}
     func patchVoid(_ path: String, body: Encodable & Sendable) async throws {}
+    func uploadBytes(_ body: Data, to url: String, method: String, headers: [String: String]) async throws {}
 
     private func decode<T: Decodable>(_ data: Data, for path: String) throws -> T {
         do { return try JSONDecoder().decode(T.self, from: data) } catch {
@@ -60,6 +75,10 @@ struct FixtureClient: AppStoreConnectClient {
             return Data(Self.reviewSubmission.utf8)
         case ("POST", "reviewSubmissionItems"):
             return Data(Self.reviewSubmissionItem.utf8)
+        case ("GET", "buildUploads"), ("POST", "buildUploads"):
+            return Data(Self.buildUpload.utf8)
+        case ("PATCH", "buildUploadFiles"):
+            return Data(Self.buildUploadFileCommitted.utf8)
         default:
             break
         }
@@ -96,5 +115,28 @@ struct FixtureClient: AppStoreConnectClient {
     private static let reviewSubmissionItem = """
         {"data":{"type":"reviewSubmissionItems","id":"MOCK-ITEM-ID","attributes":{"state":"READY_FOR_REVIEW"}}}
         """
+    private static let buildUpload = """
+        {"data":{"type":"buildUploads","id":"MOCK-UPLOAD-ID","attributes":{"cfBundleShortVersionString":"1.0",\
+        "cfBundleVersion":"42","platform":"IOS","state":{"state":"COMPLETE"}},\
+        "relationships":{"build":{"data":{"type":"builds","id":"MOCK-BUILD-ID"}}}}}
+        """
+    private static func buildUploadFile(fileSize: Int64) -> String {
+        """
+        {"data":{"type":"buildUploadFiles","id":"MOCK-UPLOAD-FILE-ID","attributes":{"fileName":"Mock.ipa",\
+        "fileSize":\(fileSize),"assetType":"ASSET","uti":"com.apple.ipa","uploadOperations":[{"method":"PUT",\
+        "url":"https://mock.upload.invalid/part-1","offset":0,"length":\(fileSize),"partNumber":1,\
+        "requestHeaders":[{"name":"Content-Type","value":"application/octet-stream"}]}]}}}
+        """
+    }
+    private static let buildUploadFileCommitted = """
+        {"data":{"type":"buildUploadFiles","id":"MOCK-UPLOAD-FILE-ID","attributes":{"fileName":"Mock.ipa",\
+        "fileSize":1024,"assetType":"ASSET","uti":"com.apple.ipa"}}}
+        """
     private static let emptyList = #"{"data":[]}"#
+}
+
+private struct FixtureEncodableBox: Encodable {
+    private let encodeClosure: (Encoder) throws -> Void
+    init(_ wrapped: Encodable) { encodeClosure = wrapped.encode }
+    func encode(to encoder: Encoder) throws { try encodeClosure(encoder) }
 }

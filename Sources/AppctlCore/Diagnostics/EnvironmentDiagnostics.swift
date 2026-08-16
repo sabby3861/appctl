@@ -30,9 +30,31 @@ public struct EnvironmentDiagnostics {
         r.append(checkAuth(config: config))
         r.append(await checkAPI(client: client))
         r.append(checkConfig(config: config))
+        r.append(checkUploadBackends(config: config))
         r.append(checkNetwork())
         r.append(checkDisk())
         return r
+    }
+
+    /// Reports which `builds upload` backends are usable: the Build Upload API needs
+    /// configured auth; altool needs Xcode's tools on the path.
+    static func checkUploadBackends(config: AppctlConfig) -> CheckResult {
+        let apiAvailable = config.keyID != nil && config.issuerID != nil
+        let altoolPath = shell("xcrun -f altool 2>/dev/null")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let altoolAvailable = altoolPath.map { !$0.isEmpty } ?? false
+        let detail =
+            "api: \(apiAvailable ? "available" : "needs auth setup"), "
+            + "altool: \(altoolAvailable ? "available" : "not found")"
+        if apiAvailable && altoolAvailable {
+            return CheckResult(name: "Upload Backends", status: .pass, detail: detail)
+        }
+        return CheckResult(
+            name: "Upload Backends", status: apiAvailable || altoolAvailable ? .warn : .fail,
+            detail: detail,
+            fix: apiAvailable
+                ? "Install Xcode to enable the altool backend."
+                : "Run `appctl auth setup` to enable the API backend.")
     }
 
     static func checkSwift() -> CheckResult {

@@ -14,6 +14,11 @@ public protocol AppStoreConnectClient: Sendable {
     func delete(_ path: String) async throws
     func postVoid(_ path: String, body: Encodable & Sendable) async throws
     func patchVoid(_ path: String, body: Encodable & Sendable) async throws
+    /// Sends raw bytes to a pre-signed upload URL exactly as an upload operation
+    /// instructs: the operation's method and headers verbatim, no JWT attached.
+    /// Deliberately has no default implementation — every conformer must decide how
+    /// bytes leave the process (real PUT, fixture no-op, or mock recording).
+    func uploadBytes(_ body: Data, to url: String, method: String, headers: [String: String]) async throws
     /// Diagnostic detail (pagination progress); shown only in verbose mode.
     func logDebug(_ message: String) async
     /// Non-fatal anomalies (pagination safety stops); must stay visible without verbose.

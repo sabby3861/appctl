@@ -33,6 +33,10 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case operationCancelled
     case unsupportedOperation(name: String, reason: String)
     case keychainError(operation: String, service: String, status: OSStatus, reason: String)
+    case subprocessFailed(command: String, exitCode: Int32)
+    case altoolKeyNotFound(keyID: String, searchedDirs: [String])
+    case buildProcessingFailed(state: String, details: [String])
+    case uploadPartFailed(partNumber: Int64, attempts: Int, reason: String)
 
     public var description: String { diagnosticMessage }
     public var errorDescription: String? { diagnosticMessage }
@@ -126,6 +130,20 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
         case .keychainError(let operation, let service, let status, let reason):
             return
                 "✗ Keychain \(operation.capitalized) Failed\n  Service: \(service)\n  Reason: \(reason) (OSStatus \(status))\n  Fix: Unlock your login keychain and retry. Inspect items in Keychain Access by searching \"\(service)\"."
+        case .subprocessFailed(let command, let exitCode):
+            return
+                "✗ Command Failed\n  Command: \(command)\n  Exit code: \(exitCode)\n  Fix: The tool's output above explains the failure. Re-run with --verbose for the full invocation."
+        case .altoolKeyNotFound(let keyID, let searchedDirs):
+            let dirs = searchedDirs.map { "  • \($0)" }.joined(separator: "\n")
+            return
+                "✗ altool Cannot Find Your API Key\n  altool only reads keys from its own directories, not appctl's configured path. Searched:\n\(dirs)\n  Fix: Copy your key: mkdir -p ~/.appstoreconnect/private_keys && cp <your-key.p8> ~/.appstoreconnect/private_keys/AuthKey_\(keyID).p8"
+        case .buildProcessingFailed(let state, let details):
+            let detail = details.isEmpty ? "" : "\n" + details.map { "  • \($0)" }.joined(separator: "\n")
+            return
+                "✗ Build Processing Failed\n  State: \(state)\(detail)\n  Fix: Check the build in App Store Connect → TestFlight for the full processing report, correct the issue, and upload a new build."
+        case .uploadPartFailed(let partNumber, let attempts, let reason):
+            return
+                "✗ Upload Part Failed\n  Part \(partNumber) failed after \(attempts) attempt(s): \(reason)\n  Fix: Re-run the same command — completed parts are recorded in the sidecar file and only missing parts will be re-uploaded."
         }
     }
 

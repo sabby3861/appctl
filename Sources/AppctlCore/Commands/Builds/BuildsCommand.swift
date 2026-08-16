@@ -4,7 +4,7 @@ import Foundation
 public struct BuildsCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "builds", abstract: "List and manage builds.",
-        subcommands: [List.self, Info.self, SetCompliance.self], defaultSubcommand: List.self)
+        subcommands: [List.self, Info.self, SetCompliance.self, Upload.self], defaultSubcommand: List.self)
     public init() {}
 
     struct List: AsyncParsableCommand {
@@ -94,6 +94,228 @@ public struct BuildsCommand: AsyncParsableCommand {
                 spinner.stop(success: false)
                 throw error
             }
+        }
+    }
+
+    struct Upload: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Upload an .ipa/.pkg to App Store Connect.",
+            discussion: """
+                The default backend uses the Build Upload API and is resumable: completed
+                parts are recorded in a sidecar file next to the archive, so re-running
+                after an interruption uploads only the missing parts.
+                """)
+        @Option(name: .long, help: "Path to the .ipa or .pkg to upload.") var file: String
+        @Option(name: .long, help: "App ID.") var appId: String?
+        @Option(name: .long, help: "Platform: ios, macos, tvos, visionos.") var platform = "ios"
+        @Option(name: .long, help: "Upload backend: api or altool.") var backend = "api"
+        @Flag(name: .long, help: "Wait for build processing and reflect the result in the exit code.")
+        var wait = false
+        @Flag(name: .long, help: "Preview the upload without sending anything.") var dryRun = false
+        @Option(name: .long, help: "CFBundleShortVersionString override (parsed from the IPA when omitted).")
+        var shortVersion: String?
+        @Option(name: .long, help: "CFBundleVersion override (parsed from the IPA when omitted).")
+        var bundleVersion: String?
+        @Option(
+            name: .long, help: "CFBundleIdentifier override, altool backend only (parsed from the IPA when omitted).")
+        var bundleId: String?
+        @OptionGroup var globals: GlobalOptions
+        init() {}
+
+        func run() async throws {
+            let (client, config) = try globals.apiClient()
+            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let appID = try resolveAppID(appId, config: config)
+            guard Self.ascPlatform(for: platform) != nil else {
+                throw AppctlError.invalidInput(
+                    field: "platform", value: platform, expected: "ios, macos, tvos, or visionos")
+            }
+            let archive = URL(filePath: NSString(string: file).expandingTildeInPath)
+            guard FileManager.default.fileExists(atPath: archive.path) else {
+                throw AppctlError.fileNotFound(path: archive.path)
+            }
+            let metadata = try resolveMetadata(archive: archive)
+            switch backend {
+            case "api":
+                try await Self.executeAPI(
+                    client: client, output: output, archive: archive, appID: appID,
+                    platform: platform, shortVersion: metadata.shortVersion,
+                    bundleVersion: metadata.bundleVersion, wait: wait, dryRun: dryRun)
+            case "altool":
+                try await Self.executeAltool(
+                    client: client, output: output, config: config, archive: archive,
+                    appID: appID, platform: platform, metadata: metadata,
+                    wait: wait, dryRun: dryRun, runner: SubprocessRunner())
+            default:
+                throw AppctlError.invalidInput(field: "backend", value: backend, expected: "api or altool")
+            }
+        }
+
+        /// Flags win over IPA parsing; parsing only runs for values not supplied.
+        /// A .pkg (no Payload/*.app) therefore works when all three flags are given.
+        private func resolveMetadata(archive: URL) throws -> ArchiveMetadata {
+            if let shortVersion, let bundleVersion, backend != "altool" || bundleId != nil {
+                return ArchiveMetadata(
+                    bundleID: bundleId ?? "", shortVersion: shortVersion, bundleVersion: bundleVersion)
+            }
+            let parsed = try IPAInspector.inspect(ipaAt: archive)
+            return ArchiveMetadata(
+                bundleID: bundleId ?? parsed.bundleID,
+                shortVersion: shortVersion ?? parsed.shortVersion,
+                bundleVersion: bundleVersion ?? parsed.bundleVersion)
+        }
+
+        static func ascPlatform(for platform: String) -> String? {
+            switch platform.lowercased() {
+            case "ios": return "IOS"
+            case "macos": return "MAC_OS"
+            case "tvos": return "TV_OS"
+            case "visionos": return "VISION_OS"
+            default: return nil
+            }
+        }
+
+        static func uti(for archive: URL) -> String {
+            archive.pathExtension.lowercased() == "pkg" ? "com.apple.pkg" : "com.apple.ipa"
+        }
+
+        static func executeAPI(
+            client: any AppStoreConnectClient, output: OutputFormatter, archive: URL,
+            appID: String, platform: String, shortVersion: String, bundleVersion: String,
+            wait: Bool, dryRun: Bool, retryBaseDelay: TimeInterval = 1.0,
+            pollInterval: Duration = .seconds(30), maxPolls: Int = 240
+        ) async throws {
+            guard let ascPlatform = ascPlatform(for: platform) else {
+                throw AppctlError.invalidInput(
+                    field: "platform", value: platform, expected: "ios, macos, tvos, or visionos")
+            }
+            if dryRun {
+                var steps = [
+                    "POST v1/buildUploads (\(shortVersion) (\(bundleVersion)), \(ascPlatform), app \(appID))",
+                    "POST v1/buildUploadFiles (reserve \(archive.lastPathComponent))",
+                    "PUT each upload operation's byte range (resumable via \(UploadSidecar.url(for: archive).lastPathComponent))",
+                    "PATCH v1/buildUploadFiles/{id} (commit: uploaded=true + MD5 checksum)",
+                ]
+                if wait { steps.append("Poll GET v1/builds until processing completes") }
+                output.info("Dry run — no requests will be sent. Planned sequence:")
+                // printDetail rather than info so the plan also reaches piped/JSON
+                // consumers, where stderr decoration is suppressed.
+                output.printDetail(
+                    fields: steps.enumerated().map { ("\($0.offset + 1).", $0.element) })
+                return
+            }
+            let service = BuildUploadService(client: client, retryBaseDelay: retryBaseDelay)
+            let reporter = ProgressReporter(output: output)
+            let result = try await service.upload(
+                archive: archive, appID: appID, platform: ascPlatform,
+                cfBundleShortVersionString: shortVersion, cfBundleVersion: bundleVersion,
+                uti: uti(for: archive), progress: { reporter.report($0) })
+            reporter.finish()
+            if result.partsSkipped > 0 {
+                output.info(
+                    "Resumed: \(result.partsSkipped) part(s) were already uploaded, sent \(result.partsUploaded).")
+            }
+            output.success("Upload complete (buildUpload \(result.buildUploadID)). Processing has started.")
+            if output.format == .json && !wait {
+                output.printDetail(fields: [
+                    ("Build Upload ID:", result.buildUploadID),
+                    ("Parts Uploaded:", String(result.partsUploaded)),
+                    ("Parts Skipped:", String(result.partsSkipped)),
+                ])
+            }
+            if wait {
+                try await waitForProcessing(
+                    client: client, output: output, appID: appID, version: bundleVersion,
+                    pollInterval: pollInterval, maxPolls: maxPolls)
+            }
+        }
+
+        static func executeAltool(
+            client: any AppStoreConnectClient, output: OutputFormatter, config: AppctlConfig,
+            archive: URL, appID: String, platform: String, metadata: ArchiveMetadata,
+            wait: Bool, dryRun: Bool, runner: any ProcessRunner,
+            pollInterval: Duration = .seconds(30), maxPolls: Int = 240
+        ) async throws {
+            guard let altoolType = AltoolBackend.altoolType(forPlatform: platform) else {
+                throw AppctlError.invalidInput(
+                    field: "platform", value: platform, expected: "ios, macos, tvos, or visionos")
+            }
+            guard let keyID = config.keyID, let issuerID = config.issuerID else {
+                throw AppctlError.missingAPIKey(detail: "The altool backend needs --key-id and --issuer-id.")
+            }
+            guard !metadata.bundleID.isEmpty else {
+                throw AppctlError.missingRequiredField(
+                    field: "bundle-id", in: "the archive's Info.plist or the --bundle-id flag")
+            }
+            let invocation = AltoolBackend.invocation(
+                file: archive.path, altoolType: altoolType, appleID: appID,
+                bundleID: metadata.bundleID, shortVersion: metadata.shortVersion,
+                bundleVersion: metadata.bundleVersion, keyID: keyID, issuerID: issuerID)
+            if dryRun {
+                output.info("Dry run — would execute:")
+                print(invocation.joined(separator: " "))
+                return
+            }
+            guard AltoolBackend.keyFileExists(keyID: keyID) else {
+                throw AppctlError.altoolKeyNotFound(keyID: keyID, searchedDirs: AltoolBackend.keySearchDirs)
+            }
+            try await AltoolBackend.run(invocation: invocation, runner: runner, output: output)
+            output.success("altool upload complete. Processing has started.")
+            if wait {
+                try await waitForProcessing(
+                    client: client, output: output, appID: appID, version: metadata.bundleVersion,
+                    pollInterval: pollInterval, maxPolls: maxPolls)
+            }
+        }
+
+        /// Polls `GET /v1/builds` until the uploaded build reaches a terminal
+        /// processing state. VALID exits 0; FAILED/INVALID throws so the process
+        /// exits non-zero. `version` (CFBundleVersion) pins the exact build; without
+        /// it we fall back to the newest upload, which is only a heuristic.
+        static func waitForProcessing(
+            client: any AppStoreConnectClient, output: OutputFormatter, appID: String,
+            version: String?, pollInterval: Duration, maxPolls: Int
+        ) async throws {
+            if version == nil || version?.isEmpty == true {
+                output.warning(
+                    "Resolving build by newest upload — if multiple uploads are in flight this may watch the wrong build."
+                )
+            }
+            var q: [URLQueryItem] = [
+                URLQueryItem(name: "filter[app]", value: appID),
+                URLQueryItem(name: "sort", value: "-uploadedDate"),
+                URLQueryItem(name: "fields[builds]", value: "version,processingState,uploadedDate"),
+            ]
+            if let version, !version.isEmpty {
+                q.append(URLQueryItem(name: "filter[version]", value: version))
+            }
+            let spinner = output.startSpinner("Waiting for build processing")
+            for _ in 0..<maxPolls {
+                let r: APIListResponse<Build>
+                do {
+                    r = try await client.getList("builds", queryItems: q, limit: 1, pageSize: 1)
+                } catch {
+                    spinner.stop(success: false)
+                    throw error
+                }
+                let state = r.data.first?.attributes?.processingState?.uppercased()
+                switch state {
+                case "VALID":
+                    spinner.stop()
+                    output.success("Build \(r.data.first?.attributes?.version ?? "?") processed: VALID")
+                    return
+                case "FAILED", "INVALID":
+                    spinner.stop(success: false)
+                    throw AppctlError.buildProcessingFailed(state: state ?? "?", details: [])
+                default:
+                    // nil (build not visible yet) or PROCESSING — keep polling.
+                    try await Task.sleep(for: pollInterval)
+                }
+            }
+            spinner.stop(success: false)
+            throw AppctlError.timeout(
+                url: "v1/builds?filter[app]=\(appID)",
+                duration: Double(maxPolls) * Double(pollInterval.components.seconds))
         }
     }
 

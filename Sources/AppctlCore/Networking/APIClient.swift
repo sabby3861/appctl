@@ -8,6 +8,10 @@ public final class APIClient: @unchecked Sendable {
     public static let baseURL = "https://api.appstoreconnect.apple.com/v1"
     private let jwtGenerator: JWTGenerator
     private let session: URLSession
+    /// Separate session for raw byte uploads: a multi-hundred-MB part on a slow uplink
+    /// would trip the API session's `timeoutIntervalForResource` (3× the request
+    /// timeout, 90s by default), so uploads get their own generous resource window.
+    private let uploadSession: URLSession
     private let verbose: Bool
     private let decoder: JSONDecoder
     private let maxRetries = 3
@@ -24,6 +28,11 @@ public final class APIClient: @unchecked Sendable {
         config.timeoutIntervalForResource = timeout * 3
         config.httpAdditionalHeaders = ["User-Agent": "appctl/\(AppctlVersion.current) (Swift; macOS)"]
         self.session = URLSession(configuration: config)
+        let uploadConfig = URLSessionConfiguration.default
+        uploadConfig.timeoutIntervalForRequest = 300
+        uploadConfig.timeoutIntervalForResource = 3600
+        uploadConfig.httpAdditionalHeaders = config.httpAdditionalHeaders
+        self.uploadSession = URLSession(configuration: uploadConfig)
         self.decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -70,6 +79,29 @@ public final class APIClient: @unchecked Sendable {
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let _: EmptyResponse = try await executeWithRetry(req)
+    }
+
+    /// Single-attempt by design: the build-upload service owns per-part retry policy,
+    /// so retrying here as well would multiply attempts.
+    public func uploadBytes(_ body: Data, to url: String, method: String, headers: [String: String]) async throws {
+        guard let requestURL = URL(string: url) else {
+            throw AppctlError.invalidInput(field: "url", value: url, expected: "A valid upload operation URL")
+        }
+        var req = URLRequest(url: requestURL)
+        req.httpMethod = method
+        for (name, value) in headers { req.setValue(value, forHTTPHeaderField: name) }
+        if verbose {
+            var s = StandardError.shared
+            print("  → \(method) \(url) (\(body.count) bytes)", to: &s)
+        }
+        let (data, response) = try await uploadSession.upload(for: req, from: body)
+        guard let http = response as? HTTPURLResponse else {
+            throw AppctlError.invalidResponse(url: url, reason: "Not an HTTP response.")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw AppctlError.requestFailed(
+                url: url, statusCode: http.statusCode, body: String(data: data, encoding: .utf8))
+        }
     }
 
     private func buildRequest(

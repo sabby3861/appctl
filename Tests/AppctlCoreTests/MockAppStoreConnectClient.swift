@@ -23,19 +23,23 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
         private(set) var requests: [RecordedRequest] = []
         private(set) var warnings: [String] = []
         private var responses: [Data] = []
-        private var errorBodies: [String: Data] = [:]
+        private var errorBodies: [String: [Data]] = [:]
 
         func queue(_ json: String) { responses.append(Data(json.utf8)) }
 
         func recordWarning(_ message: String) { warnings.append(message) }
 
-        func failNext(_ method: String, _ path: String, withErrorBody json: String) {
-            errorBodies["\(method) \(path)"] = Data(json.utf8)
+        func failNext(_ method: String, _ path: String, withErrorBody json: String, times: Int = 1) {
+            errorBodies["\(method) \(path)", default: []]
+                .append(contentsOf: Array(repeating: Data(json.utf8), count: times))
         }
 
         func record(_ method: String, _ path: String, queryItems: [URLQueryItem]?, body: Data?) throws {
             requests.append(RecordedRequest(method: method, path: path, queryItems: queryItems, body: body))
-            if let errData = errorBodies.removeValue(forKey: "\(method) \(path)") {
+            let key = "\(method) \(path)"
+            if var queued = errorBodies[key], !queued.isEmpty {
+                let errData = queued.removeFirst()
+                errorBodies[key] = queued.isEmpty ? nil : queued
                 let decoded = try JSONDecoder().decode(APIErrorResponse.self, from: errData)
                 guard let first = decoded.errors.first else {
                     throw AppctlError.invalidResponse(url: path, reason: "Mock error body has no errors.")
@@ -70,8 +74,8 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
 
     func queue(_ json: String) async { await storage.queue(json) }
 
-    func failNext(_ method: String, _ path: String, withErrorBody json: String) async {
-        await storage.failNext(method, path, withErrorBody: json)
+    func failNext(_ method: String, _ path: String, withErrorBody json: String, times: Int = 1) async {
+        await storage.failNext(method, path, withErrorBody: json, times: times)
     }
 
     private func perform<T: Decodable>(
@@ -113,6 +117,15 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
 
     func patchVoid(_ path: String, body: Encodable & Sendable) async throws {
         try await record("PATCH", path, body: body)
+    }
+
+    /// Recorded with the upload URL as the path and the raw bytes as the body, in the
+    /// same FIFO log as API requests — so create→file→PUT→confirm ordering is one
+    /// assertion over `requests`. Headers are folded into query items for inspection.
+    func uploadBytes(_ body: Data, to url: String, method: String, headers: [String: String]) async throws {
+        let headerItems = headers.map { URLQueryItem(name: $0.key, value: $0.value) }
+            .sorted { $0.name < $1.name }
+        try await storage.record(method, url, queryItems: headerItems, body: body)
     }
 }
 

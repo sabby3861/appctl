@@ -9,37 +9,7 @@
 
 A single, fast binary that replaces Fastlane's 67-gem Ruby toolchain. Talks directly to the App Store Connect API with three-part error diagnostics, automatic retry, and CI-ready output.
 
-## Demo
-
-<!--
-TODO: replace this block with the captured demo.
-
-  Option A (recommended) — asciinema:
-    brew install asciinema
-    asciinema rec demo.cast \
-      --command "appctl workflow release --version 1.2.0 --dry-run" \
-      --idle-time-limit 1
-    asciinema upload demo.cast    # returns an https://asciinema.org/a/<id> URL
-
-  Embed:
-    [![asciicast](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>)
-
-  Option B — VHS-produced GIF (deterministic, no network):
-    brew install charmbracelet/tap/vhs
-    cat > assets/demo.tape <<'EOF'
-    Output assets/demo.gif
-    Set FontSize 14
-    Set Width 900
-    Set Height 540
-    Type "appctl workflow release --version 1.2.0 --dry-run"
-    Enter
-    Sleep 4s
-    EOF
-    vhs assets/demo.tape
-
-  Embed:
-    ![Demo](assets/demo.gif)
--->
+See [ROADMAP.md](ROADMAP.md) for planned work.
 
 ## Quick Start
 
@@ -79,7 +49,7 @@ appctl apps list
 
 | | Fastlane | appctl |
 |---|---|---|
-| Dependencies | 67 Ruby gems | **Zero** |
+| Dependencies | 67 Ruby gems | **2 Apple SPM packages, statically linked** |
 | Cold start | ~2 minutes | **Instant** |
 | Xcode breakage | Every release | **API only** |
 | Error messages | "Exit status: 65" | **What/Why/Fix** |

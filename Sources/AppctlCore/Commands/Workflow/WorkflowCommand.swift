@@ -25,13 +25,65 @@ public struct WorkflowCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(
+                client: client, output: output, appId: id, version: version, buildId: buildId,
+                platform: platform, releaseType: releaseType, phased: phased, dryRun: dryRun,
+                skipSubmit: skipSubmit, legacySubmit: legacySubmit)
+        }
+
+        struct ResolvedBuild: Sendable {
+            let id: String
+            let displayVersion: String
+            let processingState: String?
+        }
+
+        /// `--build-id` takes a `builds` resource id, not a build number: the id feeds the
+        /// version→build relationship while the fetched `attributes.version` is what humans
+        /// see. Fetching up front also fails fast on a typo, before the pipeline mutates
+        /// anything. A 404 is remapped to `resourceNotFound` because a raw API 404
+        /// deliberately carries no Fix hint, and this one has an obvious fix.
+        static func resolveExplicitBuild(
+            client: any AppStoreConnectClient, buildId: String
+        ) async throws -> ResolvedBuild {
+            let response: APIResponse<Build>
+            do {
+                response = try await client.get("builds/\(buildId)")
+            } catch AppctlError.apiError(_, let statusCode, _) where statusCode == 404 {
+                throw AppctlError.resourceNotFound(type: "Build", identifier: buildId)
+            } catch AppctlError.requestFailed(_, let statusCode, _) where statusCode == 404 {
+                throw AppctlError.resourceNotFound(type: "Build", identifier: buildId)
+            }
+            return ResolvedBuild(
+                id: buildId,
+                displayVersion: response.data.attributes?.version ?? buildId,
+                processingState: response.data.attributes?.processingState)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String,
+            version: String, buildId: String?, platform: String, releaseType: String,
+            phased: Bool, dryRun: Bool, skipSubmit: Bool, legacySubmit: Bool
+        ) async throws {
             output.info("Starting release pipeline for \(version)")
             // Step 1: Resolve build
             let resolvedBuildId: String
             let buildVersion: String
             if let explicit = buildId {
-                resolvedBuildId = explicit
-                buildVersion = explicit
+                let s = output.startSpinner("Validating build \(explicit)")
+                let resolved: ResolvedBuild
+                do {
+                    resolved = try await resolveExplicitBuild(client: client, buildId: explicit)
+                } catch {
+                    s.stop(success: false)
+                    throw error
+                }
+                s.stop()
+                resolvedBuildId = resolved.id
+                buildVersion = resolved.displayVersion
+                output.success("Found build \(buildVersion)")
+                if let state = resolved.processingState, state != "VALID" {
+                    output.warning("Build \(buildVersion) processing state is \(state) — attach may fail.")
+                }
             } else {
                 let s = output.startSpinner("Finding latest valid build")
                 let builds: APIListResponse<Build> = try await client.getList(

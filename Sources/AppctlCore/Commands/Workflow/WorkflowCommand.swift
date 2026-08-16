@@ -18,6 +18,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
         @Flag(name: .long, help: "Enable phased rollout.") var phased = false
         @Flag(name: .long, help: "Preview without changes.") var dryRun = false
         @Flag(name: .long, help: "Skip review submission.") var skipSubmit = false
+        @Flag(name: .long, help: .hidden) var legacySubmit = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
@@ -92,16 +93,22 @@ public struct WorkflowCommand: AsyncParsableCommand {
             output.success("Build attached")
             // Step 4: Submit
             if !skipSubmit {
+                if legacySubmit { printLegacySubmitDeprecationWarning() }
                 let ss = output.startSpinner("Submitting for review")
                 do {
-                    let _: APIResponse<SubmissionResponse> = try await client.post(
-                        "appStoreVersionSubmissions",
-                        body: SubmissionCreateRequest(
-                            data: SubmissionCreateData(
-                                type: "appStoreVersionSubmissions",
-                                relationships: SubmissionRelationships(
-                                    appStoreVersion: RelationshipRef(
-                                        data: TypeIDRef(type: "appStoreVersions", id: vr.data.id))))))
+                    if legacySubmit {
+                        let _: APIResponse<SubmissionResponse> = try await client.post(
+                            "appStoreVersionSubmissions",
+                            body: SubmissionCreateRequest(
+                                data: SubmissionCreateData(
+                                    type: "appStoreVersionSubmissions",
+                                    relationships: SubmissionRelationships(
+                                        appStoreVersion: RelationshipRef(
+                                            data: TypeIDRef(type: "appStoreVersions", id: vr.data.id))))))
+                    } else {
+                        try await ReviewSubmissionService(client: client).submit(
+                            appId: id, platform: platform.uppercased(), versionId: vr.data.id)
+                    }
                     ss.stop()
                     output.success("Submitted for review!")
                 } catch {

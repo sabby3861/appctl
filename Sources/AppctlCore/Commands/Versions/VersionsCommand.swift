@@ -136,6 +136,7 @@ public struct VersionsCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Submit version for App Store review.")
         @Argument(help: "Version ID.") var versionId: String
         @Flag(name: .long, help: "Preview without changes.") var dryRun = false
+        @Flag(name: .long, help: .hidden) var legacySubmit = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
@@ -145,16 +146,37 @@ public struct VersionsCommand: AsyncParsableCommand {
                 output.info("[DRY RUN] Would submit version \(versionId) for review")
                 return
             }
+            if legacySubmit {
+                printLegacySubmitDeprecationWarning()
+                let spinner = output.startSpinner("Submitting for review (legacy)")
+                let body = SubmissionCreateRequest(
+                    data: SubmissionCreateData(
+                        type: "appStoreVersionSubmissions",
+                        relationships: SubmissionRelationships(
+                            appStoreVersion: RelationshipRef(
+                                data: TypeIDRef(type: "appStoreVersions", id: versionId)))))
+                do {
+                    let _: APIResponse<SubmissionResponse> = try await client.post(
+                        "appStoreVersionSubmissions", body: body)
+                    spinner.stop()
+                    output.success("Submitted for review!")
+                } catch {
+                    spinner.stop(success: false)
+                    throw error
+                }
+                return
+            }
             let spinner = output.startSpinner("Submitting for review")
-            let body = SubmissionCreateRequest(
-                data: SubmissionCreateData(
-                    type: "appStoreVersionSubmissions",
-                    relationships: SubmissionRelationships(
-                        appStoreVersion: RelationshipRef(data: TypeIDRef(type: "appStoreVersions", id: versionId)))))
             do {
-                let _: APIResponse<SubmissionResponse> = try await client.post("appStoreVersionSubmissions", body: body)
+                let (appId, platform) = try await ReviewSubmissionService.resolveAppAndPlatform(
+                    versionId: versionId, client: client)
+                let result = try await ReviewSubmissionService(client: client)
+                    .submit(appId: appId, platform: platform, versionId: versionId)
                 spinner.stop()
-                output.success("Submitted for review!")
+                output.success(
+                    result.reused
+                        ? "Added to existing review submission and submitted!"
+                        : "Submitted for review!")
             } catch {
                 spinner.stop(success: false)
                 throw error
@@ -237,20 +259,13 @@ public struct VersionsCommand: AsyncParsableCommand {
             }
             let spinner = output.startSpinner("Removing from review")
             do {
-                // The DELETE endpoint takes a submission ID, not a version ID, so we have to
-                // resolve the version's current submission first.
-                let response: OptionalAPIResponse<SubmissionResponse> = try await client.get(
-                    "appStoreVersions/\(versionId)/appStoreVersionSubmission"
-                )
-                guard let submission = response.data else {
-                    throw AppctlError.resourceNotFound(
-                        type: "Submission",
-                        identifier: "version \(versionId) is not currently submitted for review"
-                    )
-                }
-                try await client.delete("appStoreVersionSubmissions/\(submission.id)")
+                // Cancellation targets the app's open review submission, not the version,
+                // so resolve the version's app and platform first.
+                let (appId, platform) = try await ReviewSubmissionService.resolveAppAndPlatform(
+                    versionId: versionId, client: client)
+                try await ReviewSubmissionService(client: client).cancel(appId: appId, platform: platform)
                 spinner.stop()
-                output.success("Version developer-rejected")
+                output.success("Review submission canceled")
             } catch {
                 spinner.stop(success: false)
                 throw error

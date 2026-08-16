@@ -156,7 +156,7 @@ struct GlobalOptions: ParsableArguments {
             verboseOverride: verbose, noColorOverride: noColor)
     }
 
-    func apiClient() throws -> (APIClient, AppctlConfig) {
+    func apiClient() throws -> (any AppStoreConnectClient, AppctlConfig) {
         let config = try resolvedConfig()
         let gen = try AuthStore.createGenerator(from: config)
         return (APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: config.timeout), config)

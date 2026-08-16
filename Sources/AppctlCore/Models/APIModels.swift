@@ -8,7 +8,7 @@ public struct APIResponse<T: Decodable>: Decodable {
 }
 
 /// Like `APIResponse`, but accepts `data: null`. App Store Connect returns this shape
-/// from to-one related-resource fetches (e.g. `/appStoreVersions/{id}/appStoreVersionSubmission`)
+/// from to-one related-resource fetches (e.g. `/appStoreVersions/{id}/appStoreVersionPhasedRelease`)
 /// when the relationship currently has no associated record.
 public struct OptionalAPIResponse<T: Decodable>: Decodable {
     public let data: T?

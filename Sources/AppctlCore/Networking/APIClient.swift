@@ -42,14 +42,14 @@ public final class APIClient: @unchecked Sendable {
         return try await executeWithRetry(try buildRequest(method: "GET", path: path, queryItems: items))
     }
 
-    public func post<T: Decodable>(_ path: String, body: Encodable) async throws -> T {
+    public func post<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
         var req = try buildRequest(method: "POST", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await executeWithRetry(req)
     }
 
-    public func patch<T: Decodable>(_ path: String, body: Encodable) async throws -> T {
+    public func patch<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
         var req = try buildRequest(method: "PATCH", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -60,7 +60,7 @@ public final class APIClient: @unchecked Sendable {
         let _: EmptyResponse = try await executeWithRetry(try buildRequest(method: "DELETE", path: path))
     }
 
-    public func postVoid(_ path: String, body: Encodable) async throws {
+    public func postVoid(_ path: String, body: Encodable & Sendable) async throws {
         var req = try buildRequest(method: "POST", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -69,7 +69,7 @@ public final class APIClient: @unchecked Sendable {
 
     /// PATCH that expects a 204 No Content response, used for relationship endpoints
     /// (e.g. `/appStoreVersions/{id}/relationships/build`).
-    public func patchVoid(_ path: String, body: Encodable) async throws {
+    public func patchVoid(_ path: String, body: Encodable & Sendable) async throws {
         var req = try buildRequest(method: "PATCH", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

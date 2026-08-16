@@ -12,7 +12,7 @@ public struct BuildsCommand: AsyncParsableCommand {
         @Option(name: .long, help: "App ID.") var appId: String?
         @Option(name: .long, help: "Filter by state: PROCESSING, FAILED, INVALID, VALID.") var state: String?
         @Option(name: .long, help: "Filter by version.") var version: String?
-        @Option(name: .long, help: "Max results.") var limit: Int = 20
+        @OptionGroup var pagination: PaginationOptions
         @Flag(name: .long, help: "Show only expired.") var expired = false
         @OptionGroup var globals: GlobalOptions
         init() {}
@@ -21,13 +21,15 @@ public struct BuildsCommand: AsyncParsableCommand {
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
             try await Self.execute(
                 client: client, output: output, appId: appId ?? config.defaultAppID,
-                state: state, version: version, limit: limit, expired: expired)
+                state: state, version: version, limit: pagination.limit,
+                pageSize: pagination.pageSize, expired: expired)
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, appId: String?,
-            state: String?, version: String?, limit: Int, expired: Bool
+            state: String?, version: String?, limit: Int?, pageSize: Int, expired: Bool
         ) async throws {
+            try PaginationOptions.validate(limit: limit, pageSize: pageSize)
             let spinner = output.startSpinner("Fetching builds")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -35,14 +37,14 @@ public struct BuildsCommand: AsyncParsableCommand {
                     value:
                         "version,uploadedDate,expirationDate,expired,minOsVersion,processingState,usesNonExemptEncryption"
                 ), URLQueryItem(name: "sort", value: "-uploadedDate"),
-                URLQueryItem(name: "limit", value: String(min(limit, 200))),
             ]
             if let a = appId { q.append(URLQueryItem(name: "filter[app]", value: a)) }
             if let s = state { q.append(URLQueryItem(name: "filter[processingState]", value: s.uppercased())) }
             if let v = version { q.append(URLQueryItem(name: "filter[version]", value: v)) }
             if expired { q.append(URLQueryItem(name: "filter[expired]", value: "true")) }
             do {
-                let r: APIListResponse<Build> = try await client.getList("builds", queryItems: q, limit: limit)
+                let r: APIListResponse<Build> = try await client.getList(
+                    "builds", queryItems: q, limit: limit, pageSize: pageSize)
                 spinner.stop()
                 output.printList(
                     r.data,

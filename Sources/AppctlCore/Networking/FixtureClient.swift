@@ -20,12 +20,6 @@ struct FixtureClient: AppStoreConnectClient {
         try decode(fixture(method: "GET", path: path), for: path)
     }
 
-    func getList<T: Decodable>(
-        _ path: String, queryItems: [URLQueryItem]?, limit: Int
-    ) async throws -> APIListResponse<T> {
-        try decode(fixture(method: "GET", path: path), for: path)
-    }
-
     func post<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
         try decode(fixture(method: "POST", path: path), for: path)
     }

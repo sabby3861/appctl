@@ -92,8 +92,8 @@ public struct WorkflowCommand: AsyncParsableCommand {
                         URLQueryItem(name: "filter[app]", value: id),
                         URLQueryItem(name: "filter[processingState]", value: "VALID"),
                         URLQueryItem(name: "filter[expired]", value: "false"),
-                        URLQueryItem(name: "sort", value: "-uploadedDate"), URLQueryItem(name: "limit", value: "1"),
-                    ])
+                        URLQueryItem(name: "sort", value: "-uploadedDate"),
+                    ], limit: 1, pageSize: 1)
                 guard let latest = builds.data.first else {
                     s.stop(success: false)
                     throw AppctlError.resourceNotFound(
@@ -195,8 +195,8 @@ public struct WorkflowCommand: AsyncParsableCommand {
                     URLQueryItem(name: "filter[app]", value: id),
                     URLQueryItem(name: "filter[processingState]", value: "VALID"),
                     URLQueryItem(name: "filter[expired]", value: "false"),
-                    URLQueryItem(name: "sort", value: "-uploadedDate"), URLQueryItem(name: "limit", value: "1"),
-                ])
+                    URLQueryItem(name: "sort", value: "-uploadedDate"),
+                ], limit: 1, pageSize: 1)
             guard let build = builds.data.first else {
                 s.stop(success: false)
                 throw AppctlError.resourceNotFound(
@@ -296,8 +296,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
                         queryItems: [
                             URLQueryItem(name: "filter[app]", value: id),
                             URLQueryItem(name: "sort", value: "-uploadedDate"),
-                            URLQueryItem(name: "limit", value: "3"),
-                        ]
+                        ], limit: 3, pageSize: 3
                     )
                     for b in builds.data {
                         let st = b.attributes?.processingState ?? ""
@@ -309,8 +308,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
                     }
 
                     let vers: APIListResponse<AppStoreVersion> = try await client.getList(
-                        "apps/\(id)/appStoreVersions",
-                        queryItems: [URLQueryItem(name: "limit", value: "2")]
+                        "apps/\(id)/appStoreVersions", limit: 2, pageSize: 2
                     )
                     for v in vers.data {
                         let st = v.attributes?.appStoreState ?? ""

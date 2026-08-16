@@ -81,8 +81,7 @@ public struct EnvironmentDiagnostics {
             return CheckResult(name: "API Connectivity", status: .skip, detail: "Skipped (auth not configured)")
         }
         do {
-            let _: APIListResponse<App> = try await client.getList(
-                "apps", queryItems: [URLQueryItem(name: "limit", value: "1")])
+            let _: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
             return CheckResult(name: "API Connectivity", status: .pass, detail: "Connected to App Store Connect API")
         } catch {
             return CheckResult(

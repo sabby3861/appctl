@@ -32,14 +32,10 @@ public final class APIClient: @unchecked Sendable {
         try await executeWithRetry(try await buildRequest(method: "GET", path: path, queryItems: queryItems))
     }
 
-    public func getList<T: Decodable>(
-        _ path: String, queryItems: [URLQueryItem]? = nil, limit: Int = 200
-    ) async throws -> APIListResponse<T> {
-        var items = queryItems ?? []
-        if !items.contains(where: { $0.name == "limit" }) {
-            items.append(URLQueryItem(name: "limit", value: String(min(limit, 200))))
-        }
-        return try await executeWithRetry(try await buildRequest(method: "GET", path: path, queryItems: items))
+    public func logDebug(_ message: String) {
+        guard verbose else { return }
+        var stderr = StandardError.shared
+        print("  \(message)", to: &stderr)
     }
 
     public func post<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {

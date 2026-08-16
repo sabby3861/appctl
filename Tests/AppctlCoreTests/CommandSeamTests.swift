@@ -5,7 +5,8 @@ import Testing
 
 /// Command-seam tests: each suite drives a command's `execute(client:...)` seam with
 /// the mock and asserts the exact requests it issues. Service internals (submission
-/// reuse, pagination) are covered in ReviewSubmissionTests — not repeated here.
+/// reuse) are covered in ReviewSubmissionTests and pagination in PaginationTests —
+/// not repeated here.
 
 private func quietOutput() -> OutputFormatter {
     OutputFormatter(format: .json, noColor: true)
@@ -22,7 +23,7 @@ private func quietOutput() -> OutputFormatter {
         await mock.queue(Self.appsList)
 
         try await AppsCommand.List.execute(
-            client: mock, output: quietOutput(), bundleId: nil, name: nil, limit: 50)
+            client: mock, output: quietOutput(), bundleId: nil, name: nil, limit: 50, pageSize: 200)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -30,18 +31,19 @@ private func quietOutput() -> OutputFormatter {
         #expect(requests[0].path == "apps")
         let items = try #require(requests[0].queryItems)
         #expect(items.contains(URLQueryItem(name: "fields[apps]", value: "name,bundleId,sku,primaryLocale")))
-        #expect(items.contains(URLQueryItem(name: "limit", value: "50")))
+        #expect(
+            items.contains(URLQueryItem(name: "limit", value: "50")),
+            "per-page limit shrinks to the total limit when smaller than the page size")
     }
 
-    @Test func clampsLimitToAPIMaximum() async throws {
+    @Test func rejectsOutOfRangePageSize() async throws {
         let mock = MockAppStoreConnectClient()
-        await mock.queue(Self.appsList)
 
-        try await AppsCommand.List.execute(
-            client: mock, output: quietOutput(), bundleId: nil, name: nil, limit: 999)
-
-        let items = try #require(await mock.requests.first?.queryItems)
-        #expect(items.contains(URLQueryItem(name: "limit", value: "200")), "ASC caps per-page limit at 200")
+        await #expect(throws: AppctlError.self) {
+            try await AppsCommand.List.execute(
+                client: mock, output: quietOutput(), bundleId: nil, name: nil, limit: nil, pageSize: 999)
+        }
+        #expect(await mock.requests.isEmpty, "validation must fail before any request is issued")
     }
 
     @Test func appliesBundleIdAndNameFilters() async throws {
@@ -49,7 +51,8 @@ private func quietOutput() -> OutputFormatter {
         await mock.queue(Self.appsList)
 
         try await AppsCommand.List.execute(
-            client: mock, output: quietOutput(), bundleId: "com.example.app", name: "My App", limit: 200)
+            client: mock, output: quietOutput(), bundleId: "com.example.app", name: "My App",
+            limit: 200, pageSize: 200)
 
         let items = try #require(await mock.requests.first?.queryItems)
         #expect(items.contains(URLQueryItem(name: "filter[bundleId]", value: "com.example.app")))
@@ -69,7 +72,7 @@ private func quietOutput() -> OutputFormatter {
 
         try await BuildsCommand.List.execute(
             client: mock, output: quietOutput(), appId: nil, state: nil, version: nil,
-            limit: 20, expired: false)
+            limit: 20, pageSize: 200, expired: false)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -86,7 +89,7 @@ private func quietOutput() -> OutputFormatter {
 
         try await BuildsCommand.List.execute(
             client: mock, output: quietOutput(), appId: "app-1", state: "valid", version: "7",
-            limit: 20, expired: true)
+            limit: 20, pageSize: 200, expired: true)
 
         let items = try #require(await mock.requests.first?.queryItems)
         #expect(items.contains(URLQueryItem(name: "filter[app]", value: "app-1")))

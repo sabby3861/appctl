@@ -105,17 +105,12 @@ public struct ReviewSubmissionService: Sendable {
     private func openSubmissions(
         appId: String, platform: String, states: [String]
     ) async throws -> [ReviewSubmission] {
-        var page: APIListResponse<ReviewSubmission> = try await client.getList(
+        let page: APIListResponse<ReviewSubmission> = try await client.getList(
             "apps/\(appId)/reviewSubmissions",
             queryItems: [
                 URLQueryItem(name: "filter[state]", value: states.joined(separator: ",")),
                 URLQueryItem(name: "filter[platform]", value: platform),
             ])
-        var results = page.data
-        while let next = page.links?.next {
-            page = try await client.get(next)
-            results.append(contentsOf: page.data)
-        }
-        return results
+        return page.data
     }
 }

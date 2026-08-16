@@ -11,28 +11,31 @@ public struct AppsCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List all apps.")
         @Option(name: .long, help: "Filter by bundle ID.") var bundleId: String?
         @Option(name: .long, help: "Filter by name.") var name: String?
-        @Option(name: .long, help: "Max results.") var limit: Int = 200
+        @OptionGroup var pagination: PaginationOptions
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
-            try await Self.execute(client: client, output: output, bundleId: bundleId, name: name, limit: limit)
+            try await Self.execute(
+                client: client, output: output, bundleId: bundleId, name: name,
+                limit: pagination.limit, pageSize: pagination.pageSize)
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter,
-            bundleId: String?, name: String?, limit: Int
+            bundleId: String?, name: String?, limit: Int?, pageSize: Int
         ) async throws {
+            try PaginationOptions.validate(limit: limit, pageSize: pageSize)
             let spinner = output.startSpinner("Fetching apps")
             var q: [URLQueryItem] = [
-                URLQueryItem(name: "fields[apps]", value: "name,bundleId,sku,primaryLocale"),
-                URLQueryItem(name: "limit", value: String(min(limit, 200))),
+                URLQueryItem(name: "fields[apps]", value: "name,bundleId,sku,primaryLocale")
             ]
             if let b = bundleId { q.append(URLQueryItem(name: "filter[bundleId]", value: b)) }
             if let n = name { q.append(URLQueryItem(name: "filter[name]", value: n)) }
             do {
-                let r: APIListResponse<App> = try await client.getList("apps", queryItems: q, limit: limit)
+                let r: APIListResponse<App> = try await client.getList(
+                    "apps", queryItems: q, limit: limit, pageSize: pageSize)
                 spinner.stop()
                 output.printList(
                     r.data,
@@ -63,10 +66,8 @@ public struct AppsCommand: AsyncParsableCommand {
                 if identifier.contains(".") {
                     let r: APIListResponse<App> = try await client.getList(
                         "apps",
-                        queryItems: [
-                            URLQueryItem(name: "filter[bundleId]", value: identifier),
-                            URLQueryItem(name: "limit", value: "1"),
-                        ])
+                        queryItems: [URLQueryItem(name: "filter[bundleId]", value: identifier)],
+                        limit: 1, pageSize: 1)
                     guard let found = r.data.first else {
                         spinner.stop(success: false)
                         throw AppctlError.resourceNotFound(type: "App", identifier: identifier)

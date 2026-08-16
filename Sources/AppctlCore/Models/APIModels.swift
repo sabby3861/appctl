@@ -20,6 +20,33 @@ public struct APIListResponse<T: Decodable>: Decodable {
     public let included: [IncludedResource]?
     public let links: PageLinks?
     public let meta: ResponseMeta?
+    /// Set by the client's pagination layer, never decoded from the API: how many
+    /// pages were fetched to assemble this response. `nil` on raw single-page decodes.
+    public let pagesFetched: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case data, included, links, meta
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        data = try container.decode([T].self, forKey: .data)
+        included = try container.decodeIfPresent([IncludedResource].self, forKey: .included)
+        links = try container.decodeIfPresent(PageLinks.self, forKey: .links)
+        meta = try container.decodeIfPresent(ResponseMeta.self, forKey: .meta)
+        pagesFetched = nil
+    }
+
+    init(
+        data: [T], included: [IncludedResource]?, links: PageLinks?, meta: ResponseMeta?,
+        pagesFetched: Int?
+    ) {
+        self.data = data
+        self.included = included
+        self.links = links
+        self.meta = meta
+        self.pagesFetched = pagesFetched
+    }
 }
 
 public struct PageLinks: Decodable {

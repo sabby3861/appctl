@@ -170,8 +170,7 @@ public struct AuthCommand: AsyncParsableCommand {
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
             let spinner = output.startSpinner("Verifying credentials")
             do {
-                let r: APIListResponse<App> = try await client.getList(
-                    "apps", queryItems: [URLQueryItem(name: "limit", value: "1")])
+                let r: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
                 spinner.stop()
                 let total = r.meta?.paging?.total ?? r.data.count
                 output.success("Authentication successful. Account has \(total) app\(total == 1 ? "" : "s").")

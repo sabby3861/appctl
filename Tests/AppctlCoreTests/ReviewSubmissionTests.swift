@@ -93,10 +93,11 @@ import Testing
     @Test func submitFollowsPaginationWhenSearchingForReusableSubmission() async throws {
         let mock = MockAppStoreConnectClient()
         await mock.queue(
-            "{\"data\":[],\"links\":{\"next\":\"https://api.appstoreconnect.apple.com/v1/apps/app-1/reviewSubmissions?cursor=x\"}}"
+            "{\"data\":[{\"type\":\"reviewSubmissions\",\"id\":\"rs-2\",\"attributes\":{\"state\":\"READY_FOR_REVIEW\"}}],"
+                + "\"links\":{\"next\":\"https://api.appstoreconnect.apple.com/v1/apps/app-1/reviewSubmissions?cursor=x\"}}"
         )
         await mock.queue(
-            "{\"data\":[{\"type\":\"reviewSubmissions\",\"id\":\"rs-2\",\"attributes\":{\"state\":\"READY_FOR_REVIEW\"}}]}"
+            "{\"data\":[{\"type\":\"reviewSubmissions\",\"id\":\"rs-3\",\"attributes\":{\"state\":\"READY_FOR_REVIEW\"}}]}"
         )
         await mock.queue(Self.createdItem)
         await mock.queue(
@@ -109,7 +110,27 @@ import Testing
         #expect(result.submission.id == "rs-2")
 
         let gets = await mock.requests.filter { $0.method == "GET" }
-        #expect(gets.count == 2, "must follow links.next when scanning for reusable submissions")
+        try #require(gets.count == 2, "must follow links.next when scanning for reusable submissions")
+        #expect(gets[1].path == "https://api.appstoreconnect.apple.com/v1/apps/app-1/reviewSubmissions?cursor=x")
+    }
+
+    @Test func submitStopsScanningOnEmptyPageWithNextLink() async throws {
+        // Documented ASC bug: an empty page that still carries a next link must be
+        // treated as terminal, so the service creates a fresh submission.
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(
+            "{\"data\":[],\"links\":{\"next\":\"https://api.appstoreconnect.apple.com/v1/apps/app-1/reviewSubmissions?cursor=x\"}}"
+        )
+        await mock.queue(Self.createdSubmission)
+        await mock.queue(Self.createdItem)
+        await mock.queue(Self.submittedSubmission)
+
+        let result = try await ReviewSubmissionService(client: mock)
+            .submit(appId: "app-1", platform: "IOS", versionId: "ver-1")
+        #expect(result.reused == false)
+
+        let gets = await mock.requests.filter { $0.method == "GET" }
+        #expect(gets.count == 1, "an empty page must terminate the scan even when next is present")
     }
 
     @Test func conflictSurfacesAppleErrorDetailVerbatim() async throws {

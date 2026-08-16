@@ -22,13 +22,12 @@ public struct VersionsCommand: AsyncParsableCommand {
             var q: [URLQueryItem] = [
                 URLQueryItem(
                     name: "fields[appStoreVersions]",
-                    value: "platform,versionString,appStoreState,releaseType,createdDate"),
-                URLQueryItem(name: "limit", value: "10"),
+                    value: "platform,versionString,appStoreState,releaseType,createdDate")
             ]
             if let p = platform { q.append(URLQueryItem(name: "filter[platform]", value: p.uppercased())) }
             do {
                 let r: APIListResponse<AppStoreVersion> = try await client.getList(
-                    "apps/\(id)/appStoreVersions", queryItems: q)
+                    "apps/\(id)/appStoreVersions", queryItems: q, limit: 10, pageSize: 10)
                 spinner.stop()
                 output.printList(
                     r.data,

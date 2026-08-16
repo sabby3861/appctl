@@ -15,10 +15,7 @@ struct IntegrationTests {
         let config = try ConfigLoader.load()
         let gen = try AuthStore.createGenerator(from: config)
         let client = APIClient(jwtGenerator: gen)
-        let r: APIListResponse<App> = try await client.getList(
-            "apps",
-            queryItems: [.init(name: "limit", value: "1")]
-        )
+        let r: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
         #expect(!r.data.isEmpty)
     }
 }

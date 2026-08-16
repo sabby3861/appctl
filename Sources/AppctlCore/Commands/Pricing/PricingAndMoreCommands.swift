@@ -49,10 +49,7 @@ public struct PricingCommand: AsyncParsableCommand {
             do {
                 let r: APIListResponse<Territory> = try await client.getList(
                     "territories",
-                    queryItems: [
-                        URLQueryItem(name: "fields[territories]", value: "currency"),
-                        URLQueryItem(name: "limit", value: "200"),
-                    ])
+                    queryItems: [URLQueryItem(name: "fields[territories]", value: "currency")])
                 spinner.stop()
                 output.printList(
                     r.data,
@@ -227,24 +224,24 @@ public struct ReviewCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(commandName: "list", abstract: "List customer reviews.")
         @Option(name: .long, help: "App ID.") var appId: String?
         @Option(name: .long, help: "Filter by rating (1-5).") var rating: Int?
-        @Option(name: .long, help: "Max results.") var limit: Int = 20
+        @OptionGroup var pagination: PaginationOptions
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
             let id = try resolveAppID(appId, config: config)
+            let (limit, pageSize) = try pagination.validated()
             let spinner = output.startSpinner("Fetching reviews")
             var q: [URLQueryItem] = [
                 URLQueryItem(
                     name: "fields[customerReviews]", value: "rating,title,body,reviewerNickname,createdDate,territory"),
                 URLQueryItem(name: "sort", value: "-createdDate"),
-                URLQueryItem(name: "limit", value: String(min(limit, 200))),
             ]
             if let r = rating, (1...5).contains(r) { q.append(URLQueryItem(name: "filter[rating]", value: String(r))) }
             do {
                 let r: APIListResponse<CustomerReview> = try await client.getList(
-                    "apps/\(id)/customerReviews", queryItems: q)
+                    "apps/\(id)/customerReviews", queryItems: q, limit: limit, pageSize: pageSize)
                 spinner.stop()
                 output.printList(
                     r.data,

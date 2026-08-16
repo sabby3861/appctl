@@ -21,10 +21,13 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
 
     actor Storage {
         private(set) var requests: [RecordedRequest] = []
+        private(set) var warnings: [String] = []
         private var responses: [Data] = []
         private var errorBodies: [String: Data] = [:]
 
         func queue(_ json: String) { responses.append(Data(json.utf8)) }
+
+        func recordWarning(_ message: String) { warnings.append(message) }
 
         func failNext(_ method: String, _ path: String, withErrorBody json: String) {
             errorBodies["\(method) \(path)"] = Data(json.utf8)
@@ -58,6 +61,13 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
         get async { await storage.requests }
     }
 
+    /// Warnings the shared pagination layer emitted (safety-cap or repeated-link stops).
+    var warnings: [String] {
+        get async { await storage.warnings }
+    }
+
+    func logWarning(_ message: String) async { await storage.recordWarning(message) }
+
     func queue(_ json: String) async { await storage.queue(json) }
 
     func failNext(_ method: String, _ path: String, withErrorBody json: String) async {
@@ -82,12 +92,6 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
     }
 
     func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem]?) async throws -> T {
-        try await perform("GET", path, queryItems: queryItems)
-    }
-
-    func getList<T: Decodable>(
-        _ path: String, queryItems: [URLQueryItem]?, limit: Int
-    ) async throws -> APIListResponse<T> {
         try await perform("GET", path, queryItems: queryItems)
     }
 

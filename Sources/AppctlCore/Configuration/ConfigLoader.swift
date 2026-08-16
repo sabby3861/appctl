@@ -155,7 +155,7 @@ public struct ConfigLoader {
 
     private static func resolvePath(_ path: String) -> String {
         if path.hasPrefix("~") {
-            return path.replacingOccurrences(of: "~", with: FileManager.default.homeDirectoryForCurrentUser.path)
+            return (path as NSString).expandingTildeInPath
         }
         if path.hasPrefix("/") { return path }
         return FileManager.default.currentDirectoryPath + "/" + path

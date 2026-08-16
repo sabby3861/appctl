@@ -38,6 +38,28 @@ import Testing
     }
 }
 
+@Suite("Path Resolution") struct PathResolutionTests {
+    @Test func tildePathExpands() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let config = try ConfigLoader.load(privateKeyPathOverride: "~/x")
+        #expect(config.privateKeyPath == "\(home)/x")
+    }
+    @Test func bareTildeExpands() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let config = try ConfigLoader.load(privateKeyPathOverride: "~")
+        #expect(config.privateKeyPath == home)
+    }
+    @Test func midStringTildeUnchanged() throws {
+        let config = try ConfigLoader.load(privateKeyPathOverride: "/a/b~c/d")
+        #expect(config.privateKeyPath == "/a/b~c/d")
+    }
+    @Test func relativeTildeNotExpanded() throws {
+        let config = try ConfigLoader.load(privateKeyPathOverride: "./~backup")
+        let cwd = FileManager.default.currentDirectoryPath
+        #expect(config.privateKeyPath == "\(cwd)/./~backup")
+    }
+}
+
 @Suite("Errors") struct ErrorTests {
     @Test func allErrorsHaveMessages() {
         let errors: [AppctlError] = [

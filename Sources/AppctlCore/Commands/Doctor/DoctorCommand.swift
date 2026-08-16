@@ -14,7 +14,9 @@ public struct DoctorCommand: AsyncParsableCommand {
         let config = try ConfigLoader.load(
             keyIDOverride: globals.keyId, issuerIDOverride: globals.issuerId,
             privateKeyPathOverride: globals.privateKeyPath)
-        let results = await EnvironmentDiagnostics.runAll(config: config)
+        // nil when auth isn't configured — diagnostics then skip the connectivity check.
+        let client = (try? globals.apiClient(timeout: 10))?.0
+        let results = await EnvironmentDiagnostics.runAll(config: config, client: client)
         for result in results {
             let sym: String
             if output.useColor {

@@ -222,6 +222,10 @@ struct GlobalOptions: ParsableArguments {
     @Option(name: .long, help: "Output format: text, json, table, csv.") var format: String?
     @Flag(name: .long, help: "Show verbose output.") var verbose = false
     @Flag(name: .long, help: "Disable colored output.") var noColor = false
+    /// Hidden rehearsal mode: serves offline fixtures instead of touching credentials
+    /// or the network. Placed per-subcommand (`appctl workflow release … --mock`)
+    /// because ArgumentParser does not propagate root-level flags to subcommands.
+    @Flag(name: .long, help: .hidden) var mock = false
     init() {}
 
     var resolvedFormat: OutputFormat {
@@ -236,9 +240,14 @@ struct GlobalOptions: ParsableArguments {
             verboseOverride: verbose, noColorOverride: noColor)
     }
 
-    func apiClient() throws -> (any AppStoreConnectClient, AppctlConfig) {
+    /// The only place a concrete client is constructed. `timeout` overrides the
+    /// configured value for callers that need a snappier check (doctor).
+    func apiClient(timeout: TimeInterval? = nil) throws -> (any AppStoreConnectClient, AppctlConfig) {
+        if mock {
+            return (FixtureClient(), FixtureClient.mockConfig(verbose: verbose, noColor: noColor))
+        }
         let config = try resolvedConfig()
         let gen = try AuthStore.createGenerator(from: config)
-        return (APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: config.timeout), config)
+        return (APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: timeout ?? config.timeout), config)
     }
 }

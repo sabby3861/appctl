@@ -17,6 +17,13 @@ public struct AppsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            try await Self.execute(client: client, output: output, bundleId: bundleId, name: name, limit: limit)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter,
+            bundleId: String?, name: String?, limit: Int
+        ) async throws {
             let spinner = output.startSpinner("Fetching apps")
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "fields[apps]", value: "name,bundleId,sku,primaryLocale"),

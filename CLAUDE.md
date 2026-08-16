@@ -10,8 +10,9 @@ Runtime minimum: macOS 13 (do not raise without discussion). This is a macOS CLI
 - Public AppctlCore types are Sendable by design.
 
 ## Architecture rules
-- Commands depend on `any AppStoreConnectClient` (protocol), injected via init.
-  Concrete APIClient is constructed ONLY in GlobalOptions.apiClient().
+- Commands depend on `any AppStoreConnectClient` (protocol). Commands resolve the client
+  in run() via GlobalOptions.apiClient() (the only composition root) and delegate to a
+  static execute(client:...) seam that tests call with the mock.
 - Every user-facing failure uses the What/Why/Fix formatter with a stable error.code.
   NEVER catch an API error and print a generic message instead.
 - All JSON output goes through the versioned envelope { apiVersion, data, warnings, error?, next }.

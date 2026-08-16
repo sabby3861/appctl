@@ -29,7 +29,7 @@ public final class APIClient: @unchecked Sendable {
     }
 
     public func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem]? = nil) async throws -> T {
-        try await executeWithRetry(try buildRequest(method: "GET", path: path, queryItems: queryItems))
+        try await executeWithRetry(try await buildRequest(method: "GET", path: path, queryItems: queryItems))
     }
 
     public func getList<T: Decodable>(
@@ -39,29 +39,29 @@ public final class APIClient: @unchecked Sendable {
         if !items.contains(where: { $0.name == "limit" }) {
             items.append(URLQueryItem(name: "limit", value: String(min(limit, 200))))
         }
-        return try await executeWithRetry(try buildRequest(method: "GET", path: path, queryItems: items))
+        return try await executeWithRetry(try await buildRequest(method: "GET", path: path, queryItems: items))
     }
 
     public func post<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
-        var req = try buildRequest(method: "POST", path: path)
+        var req = try await buildRequest(method: "POST", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await executeWithRetry(req)
     }
 
     public func patch<T: Decodable>(_ path: String, body: Encodable & Sendable) async throws -> T {
-        var req = try buildRequest(method: "PATCH", path: path)
+        var req = try await buildRequest(method: "PATCH", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await executeWithRetry(req)
     }
 
     public func delete(_ path: String) async throws {
-        let _: EmptyResponse = try await executeWithRetry(try buildRequest(method: "DELETE", path: path))
+        let _: EmptyResponse = try await executeWithRetry(try await buildRequest(method: "DELETE", path: path))
     }
 
     public func postVoid(_ path: String, body: Encodable & Sendable) async throws {
-        var req = try buildRequest(method: "POST", path: path)
+        var req = try await buildRequest(method: "POST", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let _: EmptyResponse = try await executeWithRetry(req)
@@ -70,13 +70,15 @@ public final class APIClient: @unchecked Sendable {
     /// PATCH that expects a 204 No Content response, used for relationship endpoints
     /// (e.g. `/appStoreVersions/{id}/relationships/build`).
     public func patchVoid(_ path: String, body: Encodable & Sendable) async throws {
-        var req = try buildRequest(method: "PATCH", path: path)
+        var req = try await buildRequest(method: "PATCH", path: path)
         req.httpBody = try JSONEncoder().encode(AnyEncodable(body))
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let _: EmptyResponse = try await executeWithRetry(req)
     }
 
-    private func buildRequest(method: String, path: String, queryItems: [URLQueryItem]? = nil) throws -> URLRequest {
+    private func buildRequest(
+        method: String, path: String, queryItems: [URLQueryItem]? = nil
+    ) async throws -> URLRequest {
         let urlString =
             path.hasPrefix("https://")
             ? path : "\(Self.baseURL)/\(path.hasPrefix("/") ? String(path.dropFirst()) : path)"
@@ -89,17 +91,7 @@ public final class APIClient: @unchecked Sendable {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer \(try jwtGenerator.token())", forHTTPHeaderField: "Authorization")
-        return req
-    }
-
-    private func buildRequestFromURL(method: String, urlString: String) throws -> URLRequest {
-        guard let url = URL(string: urlString) else {
-            throw AppctlError.invalidInput(field: "url", value: urlString, expected: "A valid URL")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.setValue("Bearer \(try jwtGenerator.token())", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(try await jwtGenerator.token())", forHTTPHeaderField: "Authorization")
         return req
     }
 

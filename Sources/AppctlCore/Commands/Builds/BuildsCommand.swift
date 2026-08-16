@@ -19,6 +19,15 @@ public struct BuildsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            try await Self.execute(
+                client: client, output: output, appId: appId ?? config.defaultAppID,
+                state: state, version: version, limit: limit, expired: expired)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId: String?,
+            state: String?, version: String?, limit: Int, expired: Bool
+        ) async throws {
             let spinner = output.startSpinner("Fetching builds")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -28,7 +37,7 @@ public struct BuildsCommand: AsyncParsableCommand {
                 ), URLQueryItem(name: "sort", value: "-uploadedDate"),
                 URLQueryItem(name: "limit", value: String(min(limit, 200))),
             ]
-            if let a = appId ?? config.defaultAppID { q.append(URLQueryItem(name: "filter[app]", value: a)) }
+            if let a = appId { q.append(URLQueryItem(name: "filter[app]", value: a)) }
             if let s = state { q.append(URLQueryItem(name: "filter[processingState]", value: s.uppercased())) }
             if let v = version { q.append(URLQueryItem(name: "filter[version]", value: v)) }
             if expired { q.append(URLQueryItem(name: "filter[expired]", value: "true")) }

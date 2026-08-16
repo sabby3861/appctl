@@ -38,9 +38,9 @@ import Testing
         #expect(env["PATH"] == "/usr/bin")
     }
 
-    @Test func passedTokenIsShortLivedOneShotMint() throws {
+    @Test func passedTokenIsShortLivedOneShotMint() async throws {
         let generator = try JWTGenerator(keyID: "T", issuerID: "I", privateKeyPEM: Self.pem)
-        let cached = try generator.token()
+        let cached = try await generator.token()
         let minted = try generator.mintToken(lifetime: PluginManager.pluginTokenLifetime)
         #expect(minted != cached, "Plugin token must never be the cached 15-minute token")
 
@@ -48,7 +48,7 @@ import Testing
         let mintedClaims = try Self.claims(of: minted)
         #expect(mintedClaims.exp - mintedClaims.iat <= 300)
         #expect(mintedClaims.exp < cachedClaims.exp, "Short-lived mint must expire before the cached token")
-        #expect(try generator.token() == cached, "Minting must not replace the cached token")
+        #expect(try await generator.token() == cached, "Minting must not replace the cached token")
     }
 
     @Test func pluginTokenLifetimeIsCapped() {

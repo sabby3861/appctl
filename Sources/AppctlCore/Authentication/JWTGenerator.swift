@@ -1,19 +1,30 @@
 import Crypto
 import Foundation
 
-// `@unchecked Sendable`: cached token + expiry are mutable, guarded by `lock`.
-// An actor would be more idiomatic but would force every call site of `token()`
-// to become async, which would cascade through `APIClient.buildRequest`. The
-// lock is sufficient and keeps the call sites simple.
-public final class JWTGenerator: @unchecked Sendable {
+/// Caches the signed 15-minute token so a burst of requests reuses one JWT instead
+/// of re-signing per request. Actor isolation replaces the earlier NSLock.
+actor TokenCache {
+    private var token: String?
+    private var expiry: Date?
+    private let refreshMargin: TimeInterval = 60
+
+    func token(lifetime: TimeInterval, mint: @Sendable (TimeInterval) throws -> String) rethrows -> String {
+        if let cached = token, let expiry, Date() < expiry.addingTimeInterval(-refreshMargin) {
+            return cached
+        }
+        let fresh = try mint(lifetime)
+        token = fresh
+        self.expiry = Date().addingTimeInterval(lifetime)
+        return fresh
+    }
+}
+
+public struct JWTGenerator: Sendable {
     private let keyID: String
     private let issuerID: String
     private let privateKey: P256.Signing.PrivateKey
-    private var cachedToken: String?
-    private var tokenExpiry: Date?
-    private let lock = NSLock()
+    private let cache = TokenCache()
     private let tokenLifetime: TimeInterval = 15 * 60
-    private let refreshMargin: TimeInterval = 60
 
     public init(keyID: String, issuerID: String, privateKeyPEM: String) throws {
         self.keyID = keyID
@@ -30,7 +41,7 @@ public final class JWTGenerator: @unchecked Sendable {
         }
     }
 
-    public convenience init(keyID: String, issuerID: String, privateKeyPath: String) throws {
+    public init(keyID: String, issuerID: String, privateKeyPath: String) throws {
         let path = (privateKeyPath as NSString).expandingTildeInPath
         guard FileManager.default.fileExists(atPath: path) else { throw AppctlError.fileNotFound(path: path) }
         guard FileManager.default.isReadableFile(atPath: path) else { throw AppctlError.fileNotReadable(path: path) }
@@ -42,16 +53,8 @@ public final class JWTGenerator: @unchecked Sendable {
         try self.init(keyID: keyID, issuerID: issuerID, privateKeyPEM: pem)
     }
 
-    public func token() throws -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        if let cached = cachedToken, let expiry = tokenExpiry, Date() < expiry.addingTimeInterval(-refreshMargin) {
-            return cached
-        }
-        let t = try generateToken(lifetime: tokenLifetime)
-        cachedToken = t
-        tokenExpiry = Date().addingTimeInterval(tokenLifetime)
-        return t
+    public func token() async throws -> String {
+        try await cache.token(lifetime: tokenLifetime) { try self.generateToken(lifetime: $0) }
     }
 
     /// Mints a fresh token with the given lifetime, bypassing the cache in both

@@ -259,18 +259,18 @@ import Testing
         P256.Signing.PrivateKey().pemRepresentation
     }
 
-    @Test func generatesValidJWTStructure() throws {
+    @Test func generatesValidJWTStructure() async throws {
         let gen = try JWTGenerator(keyID: "TEST", issuerID: "issuer-1", privateKeyPEM: Self.freshPEM())
-        let token = try gen.token()
+        let token = try await gen.token()
         let parts = token.split(separator: ".")
         #expect(parts.count == 3, "JWT must have header.payload.signature")
         for part in parts { #expect(!part.isEmpty) }
     }
 
-    @Test func cachesTokenWithinTTL() throws {
+    @Test func cachesTokenWithinTTL() async throws {
         let gen = try JWTGenerator(keyID: "TEST", issuerID: "issuer-1", privateKeyPEM: Self.freshPEM())
-        let first = try gen.token()
-        let second = try gen.token()
+        let first = try await gen.token()
+        let second = try await gen.token()
         #expect(first == second, "Subsequent calls within the TTL must return the cached token")
     }
 

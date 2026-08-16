@@ -20,12 +20,15 @@ public struct EnvironmentDiagnostics {
         }
     }
 
-    public static func runAll(config: AppctlConfig) async -> [CheckResult] {
+    /// `client` is nil when auth isn't configured; the connectivity check is skipped
+    /// rather than constructed here, so the composition root stays the only place a
+    /// concrete client is built.
+    public static func runAll(config: AppctlConfig, client: (any AppStoreConnectClient)?) async -> [CheckResult] {
         var r: [CheckResult] = []
         r.append(checkSwift())
         r.append(checkXcode())
         r.append(checkAuth(config: config))
-        r.append(await checkAPI(config: config))
+        r.append(await checkAPI(client: client))
         r.append(checkConfig(config: config))
         r.append(checkNetwork())
         r.append(checkDisk())
@@ -73,13 +76,11 @@ public struct EnvironmentDiagnostics {
         }
     }
 
-    static func checkAPI(config: AppctlConfig) async -> CheckResult {
-        guard config.keyID != nil, config.issuerID != nil, config.privateKeyPath != nil else {
+    static func checkAPI(client: (any AppStoreConnectClient)?) async -> CheckResult {
+        guard let client else {
             return CheckResult(name: "API Connectivity", status: .skip, detail: "Skipped (auth not configured)")
         }
         do {
-            let gen = try AuthStore.createGenerator(from: config)
-            let client = APIClient(jwtGenerator: gen, timeout: 10)
             let _: APIListResponse<App> = try await client.getList(
                 "apps", queryItems: [URLQueryItem(name: "limit", value: "1")])
             return CheckResult(name: "API Connectivity", status: .pass, detail: "Connected to App Store Connect API")

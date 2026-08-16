@@ -142,6 +142,15 @@ public struct VersionsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            try await Self.execute(
+                client: client, output: output, versionId: versionId,
+                dryRun: dryRun, legacySubmit: legacySubmit)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
+            dryRun: Bool, legacySubmit: Bool
+        ) async throws {
             if dryRun {
                 output.info("[DRY RUN] Would submit version \(versionId) for review")
                 return

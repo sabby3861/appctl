@@ -13,10 +13,29 @@ public struct AuthCommand: AsyncParsableCommand {
         @Option(name: .long, help: "Issuer ID.") var issuerId: String?
         @Option(name: .long, help: "Path to .p8 key file.") var privateKeyPath: String?
         @Flag(name: .long, help: "Write to global config.") var global = false
+        @Flag(name: .long, help: "Store credentials in the login keychain instead of a config file.")
+        var keychain = false
+        @Flag(name: .long, help: "Remove appctl credentials from the login keychain and exit.")
+        var removeKeychain = false
+        @Flag(name: .long, help: "Show what would be stored or removed without changing anything.")
+        var dryRun = false
         init() {}
+
+        func validate() throws {
+            if keychain && removeKeychain {
+                throw ValidationError("--keychain and --remove-keychain are mutually exclusive.")
+            }
+            if keychain && global {
+                throw ValidationError("--global has no effect with --keychain; credentials go to the login keychain.")
+            }
+        }
 
         func run() async throws {
             let output = OutputFormatter()
+            if removeKeychain {
+                try removeKeychainCredentials(output: output)
+                return
+            }
             let keyID = try keyId ?? promptRequired("API Key ID")
             let issuerID = try issuerId ?? promptRequired("Issuer ID")
             let keyPath = try privateKeyPath ?? promptRequired("Path to .p8 key file")
@@ -27,6 +46,10 @@ public struct AuthCommand: AsyncParsableCommand {
             case .failure(let error):
                 output.error(error.diagnosticMessage)
                 throw error
+            }
+            if keychain {
+                try storeInKeychain(keyID: keyID, issuerID: issuerID, resolvedKeyPath: resolved, output: output)
+                return
             }
             let configPath: String
             if global {
@@ -44,6 +67,11 @@ public struct AuthCommand: AsyncParsableCommand {
                 .replacingOccurrences(
                     of: "# private_key_path = \"~/.config/appctl/AuthKey.p8\"",
                     with: "private_key_path = \"\(keyPath)\"")
+            if dryRun {
+                output.info(
+                    "Dry run: would write configuration to \(configPath) referencing \(keyPath). Nothing written.")
+                return
+            }
             try config.write(toFile: configPath, atomically: true, encoding: .utf8)
             // Restrict to owner read/write — the file references the path to a private key.
             do {
@@ -58,6 +86,53 @@ public struct AuthCommand: AsyncParsableCommand {
                 )
             }
             output.success("Configuration saved to \(configPath)")
+        }
+
+        private func storeInKeychain(
+            keyID: String, issuerID: String, resolvedKeyPath: String, output: OutputFormatter
+        ) throws {
+            let pem = try String(contentsOfFile: resolvedKeyPath, encoding: .utf8)
+            let store = KeychainCredentialStore()
+            let accounts = KeychainCredentialStore.Account.allCases.map(\.rawValue).joined(separator: ", ")
+            if dryRun {
+                output.info(
+                    "Dry run: would store credentials in your login keychain — service \"\(store.service)\", "
+                        + "accounts \(accounts). Nothing written.")
+                return
+            }
+            try store.store(keyID, account: .keyID)
+            try store.store(issuerID, account: .issuerID)
+            try store.store(pem, account: .privateKey)
+            output.success("Credentials stored in your login keychain.")
+            output.printDetail(fields: [
+                ("Service:", store.service),
+                ("Accounts:", accounts),
+            ])
+            output.info(
+                "Find them in Keychain Access by searching \"\(store.service)\". "
+                    + "Remove them with `appctl auth setup --remove-keychain`.")
+        }
+
+        private func removeKeychainCredentials(output: OutputFormatter) throws {
+            let store = KeychainCredentialStore()
+            let accounts = KeychainCredentialStore.Account.allCases
+            if dryRun {
+                output.info(
+                    "Dry run: would remove keychain items — service \"\(store.service)\", "
+                        + "accounts \(accounts.map(\.rawValue).joined(separator: ", ")). Nothing removed.")
+                return
+            }
+            var removed: [String] = []
+            for account in accounts {
+                if try store.delete(account) { removed.append(account.rawValue) }
+            }
+            if removed.isEmpty {
+                output.info("No appctl credentials found in the keychain (service \"\(store.service)\").")
+            } else {
+                output.success(
+                    "Removed keychain item\(removed.count == 1 ? "" : "s") \(removed.joined(separator: ", ")) "
+                        + "(service \"\(store.service)\").")
+            }
         }
 
         private func promptRequired(_ label: String, attempts: Int = 0) throws -> String {
@@ -115,17 +190,22 @@ public struct AuthCommand: AsyncParsableCommand {
             let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
             let config = try globals.resolvedConfig()
             let masked = config.issuerID.map { id in id.count > 8 ? "\(id.prefix(4))…\(id.suffix(4))" : id }
+            let store = KeychainCredentialStore()
             let source: String
             if ProcessInfo.processInfo.environment["APPCTL_KEY_ID"] != nil {
                 source = "Environment variables"
+            } else if (try? store.read(.keyID)).flatMap({ $0 }) != nil {
+                source = "Keychain (\(store.service))"
             } else if FileManager.default.fileExists(atPath: ".appctl.toml") {
                 source = ".appctl.toml (project)"
             } else {
                 source = "None found"
             }
+            let keyFile =
+                config.privateKeyPath ?? (config.privateKeyPEM != nil ? "(login keychain)" : "Not configured")
             output.printDetail(fields: [
                 ("Key ID:", config.keyID ?? "Not configured"),
-                ("Issuer ID:", masked ?? "Not configured"), ("Key File:", config.privateKeyPath ?? "Not configured"),
+                ("Issuer ID:", masked ?? "Not configured"), ("Key File:", keyFile),
                 ("Config Source:", source), ("CI Environment:", ConfigLoader.isCI() ? "Yes" : "No"),
             ])
         }

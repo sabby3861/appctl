@@ -48,15 +48,23 @@ public final class JWTGenerator: @unchecked Sendable {
         if let cached = cachedToken, let expiry = tokenExpiry, Date() < expiry.addingTimeInterval(-refreshMargin) {
             return cached
         }
-        let t = try generateToken()
+        let t = try generateToken(lifetime: tokenLifetime)
         cachedToken = t
         tokenExpiry = Date().addingTimeInterval(tokenLifetime)
         return t
     }
 
-    private func generateToken() throws -> String {
+    /// Mints a fresh token with the given lifetime, bypassing the cache in both
+    /// directions: it never returns the cached 15-minute token and never replaces
+    /// it. Intended for short-lived tokens handed to less-trusted consumers, such
+    /// as plugin child processes.
+    public func mintToken(lifetime: TimeInterval) throws -> String {
+        try generateToken(lifetime: lifetime)
+    }
+
+    private func generateToken(lifetime: TimeInterval) throws -> String {
         let now = Date()
-        let exp = now.addingTimeInterval(tokenLifetime)
+        let exp = now.addingTimeInterval(lifetime)
         let header = try JSONSerialization.data(
             withJSONObject: ["alg": "ES256", "kid": keyID, "typ": "JWT"] as [String: String], options: .sortedKeys)
         let payload = try JSONSerialization.data(
@@ -102,8 +110,11 @@ public struct AuthStore {
         guard let issuerID = config.issuerID else {
             throw AppctlError.missingAPIKey(detail: "Issuer ID is not configured.")
         }
+        if let pem = config.privateKeyPEM {
+            return try JWTGenerator(keyID: keyID, issuerID: issuerID, privateKeyPEM: pem)
+        }
         guard let keyPath = config.privateKeyPath else {
-            throw AppctlError.missingAPIKey(detail: "Private key path is not configured.")
+            throw AppctlError.missingAPIKey(detail: "Private key is not configured.")
         }
         return try JWTGenerator(keyID: keyID, issuerID: issuerID, privateKeyPath: keyPath)
     }

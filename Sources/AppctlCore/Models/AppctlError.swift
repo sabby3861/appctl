@@ -32,6 +32,7 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case invalidInput(field: String, value: String, expected: String)
     case operationCancelled
     case unsupportedOperation(name: String, reason: String)
+    case keychainError(operation: String, service: String, status: OSStatus, reason: String)
 
     public var description: String { diagnosticMessage }
     public var errorDescription: String? { diagnosticMessage }
@@ -122,6 +123,9 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
             return "Operation cancelled."
         case .unsupportedOperation(let name, let reason):
             return "✗ Unsupported Operation\n  \(name): \(reason)"
+        case .keychainError(let operation, let service, let status, let reason):
+            return
+                "✗ Keychain \(operation.capitalized) Failed\n  Service: \(service)\n  Reason: \(reason) (OSStatus \(status))\n  Fix: Unlock your login keychain and retry. Inspect items in Keychain Access by searching \"\(service)\"."
         }
     }
 

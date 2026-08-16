@@ -4,6 +4,9 @@ public struct AppctlConfig: Sendable {
     public let keyID: String?
     public let issuerID: String?
     public let privateKeyPath: String?
+    /// PEM contents of the .p8 key when it was resolved from the Keychain rather
+    /// than a file. When set, it takes precedence over `privateKeyPath`.
+    public let privateKeyPEM: String?
     public let defaultAppID: String?
     public let defaultBundleID: String?
     public let outputFormat: OutputFormat
@@ -13,12 +16,14 @@ public struct AppctlConfig: Sendable {
 
     public init(
         keyID: String? = nil, issuerID: String? = nil, privateKeyPath: String? = nil,
+        privateKeyPEM: String? = nil,
         defaultAppID: String? = nil, defaultBundleID: String? = nil,
         outputFormat: OutputFormat = .text, verbose: Bool = false, noColor: Bool = false, timeout: TimeInterval = 30
     ) {
         self.keyID = keyID
         self.issuerID = issuerID
         self.privateKeyPath = privateKeyPath
+        self.privateKeyPEM = privateKeyPEM
         self.defaultAppID = defaultAppID
         self.defaultBundleID = defaultBundleID
         self.outputFormat = outputFormat
@@ -44,14 +49,20 @@ public struct ConfigLoader {
         keyIDOverride: String? = nil, issuerIDOverride: String? = nil,
         privateKeyPathOverride: String? = nil, appIDOverride: String? = nil,
         formatOverride: String? = nil, verboseOverride: Bool = false,
-        noColorOverride: Bool = false
+        noColorOverride: Bool = false, keychain: KeychainCredentialStore = KeychainCredentialStore()
     ) throws -> AppctlConfig {
         let fileConfig = loadFromFile()
         let env = ProcessInfo.processInfo.environment
-        let keyID = keyIDOverride ?? env["APPCTL_KEY_ID"] ?? fileConfig["auth.key_id"]
-        let issuerID = issuerIDOverride ?? env["APPCTL_ISSUER_ID"] ?? fileConfig["auth.issuer_id"]
-        let privateKeyPath =
-            privateKeyPathOverride ?? env["APPCTL_PRIVATE_KEY_PATH"] ?? fileConfig["auth.private_key_path"]
+        // Credential resolution order: flags > environment > Keychain > config file.
+        // Keychain read failures (locked keychain, headless session) are non-fatal
+        // and fall through to the config file.
+        let envKeyID = keyIDOverride ?? env["APPCTL_KEY_ID"]
+        let envIssuerID = issuerIDOverride ?? env["APPCTL_ISSUER_ID"]
+        let envKeyPath = privateKeyPathOverride ?? env["APPCTL_PRIVATE_KEY_PATH"]
+        let keyID = envKeyID ?? keychainValue(keychain, .keyID) ?? fileConfig["auth.key_id"]
+        let issuerID = envIssuerID ?? keychainValue(keychain, .issuerID) ?? fileConfig["auth.issuer_id"]
+        let privateKeyPEM = envKeyPath == nil ? keychainValue(keychain, .privateKey) : nil
+        let privateKeyPath = envKeyPath ?? (privateKeyPEM == nil ? fileConfig["auth.private_key_path"] : nil)
         let defaultAppID = appIDOverride ?? env["APPCTL_APP_ID"] ?? fileConfig["app.id"]
         let formatString = formatOverride ?? env["APPCTL_FORMAT"] ?? fileConfig["output.format"] ?? "text"
         let noColor =
@@ -68,6 +79,7 @@ public struct ConfigLoader {
             keyID: keyID,
             issuerID: issuerID,
             privateKeyPath: resolveKeyPath(privateKeyPath),
+            privateKeyPEM: privateKeyPEM,
             defaultAppID: defaultAppID,
             defaultBundleID: fileConfig["app.bundle_id"],
             outputFormat: OutputFormat(rawValue: formatString) ?? .text,
@@ -75,6 +87,12 @@ public struct ConfigLoader {
             noColor: noColor,
             timeout: timeout
         )
+    }
+
+    private static func keychainValue(
+        _ store: KeychainCredentialStore, _ account: KeychainCredentialStore.Account
+    ) -> String? {
+        (try? store.read(account)).flatMap { $0 }
     }
 
     public static func isTerminal() -> Bool { isatty(STDOUT_FILENO) == 1 }

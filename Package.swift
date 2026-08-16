@@ -39,7 +39,10 @@ let package = Package(
         ),
         .testTarget(
             name: "AppctlIntegrationTests",
-            dependencies: ["AppctlCore"],
+            dependencies: [
+                "AppctlCore",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ],
             path: "Tests/AppctlIntegrationTests"
         ),
     ]

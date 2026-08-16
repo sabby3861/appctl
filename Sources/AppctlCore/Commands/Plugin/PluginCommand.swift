@@ -30,16 +30,24 @@ public struct PluginCommand: AsyncParsableCommand {
             guard let plugin = plugins.first(where: { $0.name == name }) else {
                 throw AppctlError.resourceNotFound(type: "Plugin", identifier: name)
             }
-            var env = ProcessInfo.processInfo.environment
-            if let config = try? ConfigLoader.load() {
-                if let k = config.keyID { env["APPCTL_KEY_ID"] = k }
-                if let i = config.issuerID { env["APPCTL_ISSUER_ID"] = i }
-                if let p = config.privateKeyPath { env["APPCTL_PRIVATE_KEY_PATH"] = p }
+            let manifest = try PluginManager.manifest(forPluginAt: plugin.path)
+            var token: String?
+            if manifest?.requiresAPIAccess == true {
+                do {
+                    let config = try ConfigLoader.load()
+                    let generator = try AuthStore.createGenerator(from: config)
+                    token = try generator.mintToken(lifetime: PluginManager.pluginTokenLifetime)
+                } catch let error as AppctlError {
+                    guard case .missingAPIKey(let detail) = error else { throw error }
+                    throw AppctlError.missingAPIKey(
+                        detail: "Plugin '\(name)' declares API access in its manifest, but \(detail)")
+                }
             }
             let process = Process()
             process.executableURL = URL(filePath: plugin.path)
             process.arguments = arguments
-            process.environment = env
+            process.environment = PluginManager.childEnvironment(
+                base: ProcessInfo.processInfo.environment, token: token)
             process.standardOutput = FileHandle.standardOutput
             process.standardError = FileHandle.standardError
             process.standardInput = FileHandle.standardInput
@@ -80,6 +88,49 @@ enum PluginManager {
     struct PluginInfo: Equatable {
         let name: String
         let path: String
+    }
+
+    /// A plugin opts into App Store Connect access with a sidecar manifest next
+    /// to its binary: `appctl-<name>.manifest.json` containing
+    /// `{"requiresAPIAccess": true}`. Plugins without a manifest get no
+    /// credentials of any kind.
+    struct Manifest: Decodable, Equatable {
+        let requiresAPIAccess: Bool
+    }
+
+    /// Maximum lifetime of the delegated token handed to a plugin child process.
+    static let pluginTokenLifetime: TimeInterval = 300
+
+    /// Environment keys that must never reach a plugin child process.
+    static let credentialEnvironmentKeys: Set<String> = [
+        "APPCTL_KEY_ID", "APPCTL_ISSUER_ID", "APPCTL_PRIVATE_KEY_PATH", "APPCTL_PRIVATE_KEY", "APPCTL_TOKEN",
+    ]
+
+    /// Returns nil when no manifest exists; throws when one exists but cannot be
+    /// parsed, so a typo'd manifest fails loudly instead of silently downgrading
+    /// the plugin to no API access.
+    static func manifest(forPluginAt path: String) throws -> Manifest? {
+        let manifestPath = "\(path).manifest.json"
+        guard FileManager.default.fileExists(atPath: manifestPath) else { return nil }
+        do {
+            let data = try Data(contentsOf: URL(filePath: manifestPath))
+            return try JSONDecoder().decode(Manifest.self, from: data)
+        } catch {
+            throw AppctlError.configParseError(
+                path: manifestPath, line: nil,
+                reason: "Invalid plugin manifest: \(error.localizedDescription)")
+        }
+    }
+
+    /// Builds a plugin child environment: strips appctl credential variables and
+    /// any value carrying PEM private-key material, then injects at most a
+    /// short-lived delegated token.
+    static func childEnvironment(base: [String: String], token: String?) -> [String: String] {
+        var env = base.filter {
+            !credentialEnvironmentKeys.contains($0.key) && !$0.value.contains("PRIVATE KEY-----")
+        }
+        if let token { env["APPCTL_TOKEN"] = token }
+        return env
     }
 
     /// Discovers plugins by scanning every directory in the current process's `$PATH`.

@@ -4,9 +4,52 @@ import Foundation
 // MARK: - Screenshots
 public struct ScreenshotsCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "screenshots", abstract: "Manage App Store screenshots.", subcommands: [List.self, Delete.self],
+        commandName: "screenshots", abstract: "Manage App Store screenshots.",
+        subcommands: [List.self, Upload.self, Delete.self],
         defaultSubcommand: List.self)
     public init() {}
+
+    struct Upload: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Upload screenshots from a fastlane-layout directory (<path>/<locale>/*.png|jpg).")
+        @Option(name: .long, help: "App ID.") var appId: String
+        @Option(name: .long, help: "Version string (e.g. 2.1.0).") var version: String
+        @Option(name: .long, help: "Screenshots directory.") var path: String = "./screenshots"
+        @Flag(name: .long, help: "Preview without uploading.") var dryRun = false
+        @OptionGroup var globals: GlobalOptions
+        init() {}
+        func run() async throws {
+            let (client, _) = try globals.apiClient()
+            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            _ = try await Self.execute(
+                client: client, output: output, appId: appId, version: version,
+                path: path, dryRun: dryRun)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter,
+            appId: String, version: String, path: String, dryRun: Bool,
+            retryBaseDelay: TimeInterval = 1.0
+        ) async throws -> ScreenshotUploadService.Summary {
+            // Every file is validated before the first network request; a single
+            // invalid screenshot aborts the whole run with nothing uploaded.
+            let validation = try ScreenshotUploadService.validate(
+                directory: URL(fileURLWithPath: path))
+            for entry in validation.ignored {
+                output.info("ignored (unsupported): \(entry)")
+            }
+            let service = ScreenshotUploadService(client: client, retryBaseDelay: retryBaseDelay)
+            let summary = try await service.upload(
+                plan: validation.plan, appID: appId, versionString: version,
+                dryRun: dryRun, output: output)
+            if dryRun {
+                output.info("[DRY RUN] \(validation.plan.count) screenshot(s) would be uploaded.")
+            } else {
+                output.success("Uploaded \(summary.uploadedCount) screenshot(s).")
+            }
+            return summary
+        }
+    }
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List screenshot sets.")
         @Option(name: .long, help: "Version ID.") var versionId: String

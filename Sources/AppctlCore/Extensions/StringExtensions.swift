@@ -64,10 +64,18 @@ extension String {
     }
     public var displayTypeLabel: String {
         switch self {
-        case "APP_IPHONE_67": return "iPhone 6.7\""
+        case "APP_IPHONE_67": return "iPhone 6.7\"/6.9\""
         case "APP_IPHONE_65": return "iPhone 6.5\""
-        case "APP_IPHONE_61": return "iPhone 6.1\""
-        case "APP_IPAD_PRO_3GEN_129": return "iPad Pro 12.9\""
+        case "APP_IPHONE_61": return "iPhone 6.1\"/6.3\""
+        case "APP_IPHONE_58": return "iPhone 5.8\""
+        case "APP_IPHONE_55": return "iPhone 5.5\""
+        case "APP_IPHONE_47": return "iPhone 4.7\""
+        case "APP_IPHONE_40": return "iPhone 4\""
+        case "APP_IPHONE_35": return "iPhone 3.5\""
+        case "APP_IPAD_PRO_3GEN_129": return "iPad Pro 12.9\"/13\""
+        case "APP_IPAD_PRO_3GEN_11": return "iPad 11\""
+        case "APP_IPAD_105": return "iPad 10.5\""
+        case "APP_IPAD_97": return "iPad 9.7\""
         default: return replacingOccurrences(of: "_", with: " ")
         }
     }

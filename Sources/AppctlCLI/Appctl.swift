@@ -24,7 +24,8 @@ struct Appctl: AsyncParsableCommand {
         subcommands: [
             AuthCommand.self, AppsCommand.self, BuildsCommand.self, VersionsCommand.self,
             TestFlightCommand.self, CertificatesCommand.self, LocalizationsCommand.self,
-            ScreenshotsCommand.self, ReviewCommand.self, IAPCommand.self, PricingCommand.self,
+            MetadataCommand.self, ScreenshotsCommand.self, ReviewCommand.self,
+            IAPCommand.self, PricingCommand.self,
             UsersCommand.self, WorkflowCommand.self, AICommand.self, PluginCommand.self,
             DoctorCommand.self, InitCommand.self, VersionCommand.self,
         ],

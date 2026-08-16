@@ -37,6 +37,7 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case altoolKeyNotFound(keyID: String, searchedDirs: [String])
     case buildProcessingFailed(state: String, details: [String])
     case uploadPartFailed(partNumber: Int64, attempts: Int, reason: String)
+    case screenshotValidationFailed(failures: [String])
 
     public var description: String { diagnosticMessage }
     public var errorDescription: String? { diagnosticMessage }
@@ -144,6 +145,12 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
         case .uploadPartFailed(let partNumber, let attempts, let reason):
             return
                 "✗ Upload Part Failed\n  Part \(partNumber) failed after \(attempts) attempt(s): \(reason)\n  Fix: Re-run the same command — completed parts are recorded in the sidecar file and only missing parts will be re-uploaded."
+        case .screenshotValidationFailed(let failures):
+            let failureLines = failures.map { "  • \($0)" }.joined(separator: "\n")
+            let accepted = ScreenshotDimensions.acceptedSizesLines()
+                .map { "    \($0)" }.joined(separator: "\n")
+            return
+                "✗ Screenshot Validation Failed\n\(failureLines)\n  Accepted sizes:\n\(accepted)\n  Fix: Resize or re-export the files above, then re-run. Nothing was uploaded."
         }
     }
 

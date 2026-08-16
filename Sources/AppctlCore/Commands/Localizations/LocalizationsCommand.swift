@@ -215,12 +215,16 @@ struct VersionLocalizationAttributes: Decodable {
     let whatsNew: String?
     let promotionalText: String?
     let appDescription: String?
+    let marketingUrl: String?
+    let supportUrl: String?
     enum CodingKeys: String, CodingKey {
         case locale
         case appDescription = "description"
         case keywords
         case whatsNew
         case promotionalText
+        case marketingUrl
+        case supportUrl
     }
 }
 struct LocalizationUpdateRequest: Encodable { let data: LocalizationUpdateData }
@@ -234,4 +238,48 @@ struct LocalizationUpdateAttributes: Encodable {
     let keywords: String?
     let whatsNew: String?
     let promotionalText: String?
+    let marketingUrl: String?
+    let supportUrl: String?
+
+    init(
+        description: String?, keywords: String?, whatsNew: String?, promotionalText: String?,
+        marketingUrl: String? = nil, supportUrl: String? = nil
+    ) {
+        self.description = description
+        self.keywords = keywords
+        self.whatsNew = whatsNew
+        self.promotionalText = promotionalText
+        self.marketingUrl = marketingUrl
+        self.supportUrl = supportUrl
+    }
 }
+struct LocalizationCreateRequest: Encodable { let data: LocalizationCreateData }
+struct LocalizationCreateData: Encodable {
+    let type: String
+    let attributes: LocalizationCreateAttributes
+    let relationships: LocalizationCreateRelationships
+}
+struct LocalizationCreateAttributes: Encodable {
+    let locale: String
+    let description: String?
+    let keywords: String?
+    let whatsNew: String?
+    let promotionalText: String?
+    let marketingUrl: String?
+    let supportUrl: String?
+
+    init(
+        locale: String, description: String? = nil, keywords: String? = nil,
+        whatsNew: String? = nil, promotionalText: String? = nil,
+        marketingUrl: String? = nil, supportUrl: String? = nil
+    ) {
+        self.locale = locale
+        self.description = description
+        self.keywords = keywords
+        self.whatsNew = whatsNew
+        self.promotionalText = promotionalText
+        self.marketingUrl = marketingUrl
+        self.supportUrl = supportUrl
+    }
+}
+struct LocalizationCreateRelationships: Encodable { let appStoreVersion: RelationshipRef }

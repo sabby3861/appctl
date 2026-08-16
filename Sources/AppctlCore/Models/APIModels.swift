@@ -46,7 +46,7 @@ public struct IncludedResource: Decodable {
 }
 
 public struct APIErrorResponse: Decodable { public let errors: [APIErrorDetail] }
-public struct APIErrorDetail: Decodable {
+public struct APIErrorDetail: Decodable, Sendable {
     public let id: String?
     public let status: String
     public let code: String
@@ -54,7 +54,7 @@ public struct APIErrorDetail: Decodable {
     public let detail: String?
     public let source: APIErrorSource?
 }
-public struct APIErrorSource: Decodable {
+public struct APIErrorSource: Decodable, Sendable {
     public let pointer: String?
     public let parameter: String?
 }

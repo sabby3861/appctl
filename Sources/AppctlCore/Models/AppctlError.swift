@@ -19,7 +19,7 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case timeout(url: String, duration: TimeInterval)
     case connectionFailed(host: String, reason: String)
     case invalidResponse(url: String, reason: String)
-    case apiError(code: String, title: String, detail: String?)
+    case apiError(operation: String, statusCode: Int, errors: [APIErrorDetail])
     case resourceNotFound(type: String, identifier: String)
     case conflictError(resource: String, detail: String)
     case fileNotFound(path: String)
@@ -79,9 +79,19 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
         case .invalidResponse(let url, let reason):
             return
                 "✗ Invalid API Response\n  URL: \(url)\n  \(reason)\n  Fix: Check for appctl updates: `appctl update`"
-        case .apiError(let code, let title, let detail):
-            let detailLine = detail.map { "\n  Detail: \($0)" } ?? ""
-            return "✗ App Store Connect Error\n  Code: \(code)\n  \(title)\(detailLine)"
+        case .apiError(let operation, let statusCode, let errors):
+            var lines = [
+                "✗ App Store Connect Error",
+                "  Operation: \(operation)",
+                "  Status: HTTP \(statusCode)",
+            ]
+            for e in errors {
+                lines.append("  \(e.code): \(e.title)\(e.detail.map { " — \($0)" } ?? "")")
+            }
+            if let fix = Self.apiErrorFix(codes: errors.map(\.code)) {
+                lines.append("  Fix: \(fix)")
+            }
+            return lines.joined(separator: "\n")
         case .resourceNotFound(let type, let identifier):
             return
                 "✗ \(type) Not Found\n  Identifier: \(identifier)\n  Fix: Verify it exists. Run `appctl \(type.lowercased())s list` to see available items."
@@ -113,6 +123,21 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
         case .unsupportedOperation(let name, let reason):
             return "✗ Unsupported Operation\n  \(name): \(reason)"
         }
+    }
+
+    /// Fix hints are keyed off Apple's error codes only — never the HTTP status —
+    /// so an unrecognized failure (e.g. a 404 from a removed endpoint) is reported
+    /// as-is instead of being misdiagnosed with an unrelated hint.
+    private static func apiErrorFix(codes: [String]) -> String? {
+        if codes.contains(where: { $0.hasPrefix("ENTITY_ERROR") }) {
+            return
+                "Complete the version's required metadata in App Store Connect (description, screenshots, privacy policy, …), then retry."
+        }
+        if codes.contains(where: { $0.hasPrefix("STATE_ERROR") }) {
+            return
+                "A review submission may already be open for this app. Cancel it or wait for it to finish, then retry."
+        }
+        return nil
     }
 
     private static func httpStatusFix(_ code: Int) -> String {

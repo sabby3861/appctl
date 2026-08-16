@@ -113,7 +113,10 @@ public struct WorkflowCommand: AsyncParsableCommand {
                     output.success("Submitted for review!")
                 } catch {
                     ss.stop(success: false)
-                    output.warning("Auto-submission failed — complete metadata first.")
+                    output.error(
+                        "Submission failed. Version \(version) was created and the build attached — fix the issue below, then run `appctl versions submit \(vr.data.id)`."
+                    )
+                    throw error
                 }
             }
             output.success("Release pipeline complete for \(version)")

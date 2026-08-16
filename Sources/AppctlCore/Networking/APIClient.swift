@@ -152,9 +152,12 @@ public final class APIClient: @unchecked Sendable {
                     continue
                 }
                 if let errResp = try? decoder.decode(APIErrorResponse.self, from: data),
-                    let first = errResp.errors.first
+                    !errResp.errors.isEmpty
                 {
-                    throw AppctlError.apiError(code: first.code, title: first.title, detail: first.detail)
+                    throw AppctlError.apiError(
+                        operation: "\(request.httpMethod ?? "GET") \(request.url?.path ?? "?")",
+                        statusCode: http.statusCode,
+                        errors: errResp.errors)
                 }
                 throw AppctlError.requestFailed(
                     url: request.url?.absoluteString ?? "", statusCode: http.statusCode,

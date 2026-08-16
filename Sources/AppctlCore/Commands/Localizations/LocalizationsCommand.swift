@@ -189,6 +189,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         )
                         output.success("Pushed \(locale)")
                     } catch {
+                        // TODO(V5): partial push failures still exit 0 — fold into the V5 error-taxonomy/exit-code contract.
                         output.warning("Failed to push \(locale): \(error.localizedDescription)")
                     }
                 }

@@ -37,7 +37,10 @@ struct MockAppStoreConnectClient: AppStoreConnectClient {
                 guard let first = decoded.errors.first else {
                     throw AppctlError.invalidResponse(url: path, reason: "Mock error body has no errors.")
                 }
-                throw AppctlError.apiError(code: first.code, title: first.title, detail: first.detail)
+                throw AppctlError.apiError(
+                    operation: "\(method) /v1/\(path)",
+                    statusCode: Int(first.status) ?? 0,
+                    errors: decoded.errors)
             }
         }
 
@@ -255,6 +258,10 @@ private func nested(_ dict: [String: Any], _ keys: String...) -> [String: Any] {
             Issue.record("A 409 conflict must throw so the command exits non-zero")
         } catch let error as AppctlError {
             #expect(error.diagnosticMessage.contains(detail), "Apple's errors[].detail must surface verbatim")
+            #expect(error.diagnosticMessage.contains("HTTP 409"), "the What line must carry the HTTP status")
+            #expect(
+                error.diagnosticMessage.contains("POST /v1/reviewSubmissionItems"),
+                "the What line must carry the failed operation")
         } catch {
             Issue.record("Expected AppctlError, got \(error)")
         }
@@ -265,6 +272,84 @@ private func nested(_ dict: [String: Any], _ keys: String...) -> [String: Any] {
                 "POST reviewSubmissions",
                 "POST reviewSubmissionItems",
             ], "the flow must stop at the failed step")
+    }
+
+    @Test func multipleAppleErrorsAllSurfaceVerbatim() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.emptyList)
+        await mock.queue(Self.createdSubmission)
+        await mock.failNext(
+            "POST", "reviewSubmissionItems",
+            withErrorBody: """
+                {"errors":[\
+                {"status":"409","code":"STATE_ERROR.SCREENSHOT_REQUIRED","title":"App screenshots are required.","detail":"Provide at least one screenshot for the 6.7-inch display."},\
+                {"status":"409","code":"STATE_ERROR.PRIVACY_POLICY","title":"A privacy policy URL is required.","detail":"Set a privacy policy URL for this version."}\
+                ]}
+                """
+        )
+
+        do {
+            _ = try await ReviewSubmissionService(client: mock)
+                .submit(appId: "app-1", platform: "IOS", versionId: "ver-1")
+            Issue.record("The failed submission must throw so the command exits non-zero")
+        } catch let error as AppctlError {
+            let message = error.diagnosticMessage
+            #expect(message.contains("App screenshots are required."))
+            #expect(message.contains("Provide at least one screenshot for the 6.7-inch display."))
+            #expect(message.contains("A privacy policy URL is required."))
+            #expect(message.contains("Set a privacy policy URL for this version."))
+        } catch {
+            Issue.record("Expected AppctlError, got \(error)")
+        }
+    }
+
+    @Test func notFoundIsReportedAsIsWithoutMetadataHint() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.emptyList)
+        await mock.failNext(
+            "POST", "reviewSubmissions",
+            withErrorBody:
+                "{\"errors\":[{\"status\":\"404\",\"code\":\"NOT_FOUND\",\"title\":\"The specified resource does not exist.\",\"detail\":\"There is no resource of type 'reviewSubmissions' with id 'x'.\"}]}"
+        )
+
+        do {
+            _ = try await ReviewSubmissionService(client: mock)
+                .submit(appId: "app-1", platform: "IOS", versionId: "ver-1")
+            Issue.record("A 404 must throw so the command exits non-zero")
+        } catch let error as AppctlError {
+            let message = error.diagnosticMessage
+            #expect(message.contains("HTTP 404"))
+            #expect(message.contains("The specified resource does not exist."))
+            #expect(message.contains("There is no resource of type 'reviewSubmissions' with id 'x'."))
+            #expect(!message.contains("Fix:"), "an unrecognized code must be reported as-is, with no heuristic hint")
+            #expect(!message.contains("metadata"), "a 404 must never be misdiagnosed as a metadata problem")
+        } catch {
+            Issue.record("Expected AppctlError, got \(error)")
+        }
+    }
+
+    @Test func entityErrorGetsMetadataFixHint() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.emptyList)
+        await mock.queue(Self.createdSubmission)
+        await mock.failNext(
+            "POST", "reviewSubmissionItems",
+            withErrorBody:
+                "{\"errors\":[{\"status\":\"409\",\"code\":\"ENTITY_ERROR.ATTRIBUTE.REQUIRED\",\"title\":\"The provided entity is missing a required attribute.\",\"detail\":\"You must provide a value for the attribute 'description'.\"}]}"
+        )
+
+        do {
+            _ = try await ReviewSubmissionService(client: mock)
+                .submit(appId: "app-1", platform: "IOS", versionId: "ver-1")
+            Issue.record("The failed submission must throw so the command exits non-zero")
+        } catch let error as AppctlError {
+            let message = error.diagnosticMessage
+            #expect(message.contains("You must provide a value for the attribute 'description'."))
+            #expect(message.contains("Fix:"))
+            #expect(message.contains("metadata"), "ENTITY_ERROR codes must carry the complete-metadata hint")
+        } catch {
+            Issue.record("Expected AppctlError, got \(error)")
+        }
     }
 
     @Test func cancelSearchesAllOpenStatesAndPatchesCanceled() async throws {

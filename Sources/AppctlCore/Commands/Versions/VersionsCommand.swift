@@ -16,31 +16,46 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let spinner = output.startSpinner("Fetching versions")
+            do {
+                let (versions, next) = try await Self.execute(
+                    client: client, appId: id, platform: platform,
+                    nextActions: globals.nextActions())
+                spinner.stop()
+                output.printList(
+                    versions,
+                    columns: [
+                        Column(header: "ID", value: { $0.id.truncated(to: 12) }, jsonValue: { $0.id }),
+                        Column(header: "Version") { $0.attributes?.versionString ?? "—" },
+                        Column(
+                            header: "State",
+                            value: { $0.attributes?.appStoreState?.versionStateDisplay ?? "—" },
+                            jsonValue: { $0.attributes?.appStoreState ?? "" }),
+                        Column(header: "Created") { $0.attributes?.createdDate?.formattedDate() ?? "—" },
+                    ],
+                    next: next.isEmpty ? nil : next)
+            } catch {
+                spinner.stop(success: false)
+                throw error
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, appId: String, platform: String?,
+            nextActions: NextActions
+        ) async throws -> (versions: [AppStoreVersion], next: [String: String]) {
             var q: [URLQueryItem] = [
                 URLQueryItem(
                     name: "fields[appStoreVersions]",
                     value: "platform,versionString,appStoreState,releaseType,createdDate")
             ]
             if let p = platform { q.append(URLQueryItem(name: "filter[platform]", value: p.uppercased())) }
-            do {
-                let r: APIListResponse<AppStoreVersion> = try await client.getList(
-                    "apps/\(id)/appStoreVersions", queryItems: q, limit: 10, pageSize: 10)
-                spinner.stop()
-                output.printList(
-                    r.data,
-                    columns: [
-                        Column(header: "ID") { $0.id.truncated(to: 12) },
-                        Column(header: "Version") { $0.attributes?.versionString ?? "—" },
-                        Column(header: "State") { $0.attributes?.appStoreState?.versionStateDisplay ?? "—" },
-                        Column(header: "Created") { $0.attributes?.createdDate?.formattedDate() ?? "—" },
-                    ])
-            } catch {
-                spinner.stop(success: false)
-                throw error
-            }
+            let r: APIListResponse<AppStoreVersion> = try await client.getList(
+                "apps/\(appId)/appStoreVersions", queryItems: q, limit: 10, pageSize: 10)
+            let next = nextActions.forVersions(r.data.map { ($0.id, $0.attributes?.appStoreState) })
+            return (r.data, next)
         }
     }
 
@@ -55,7 +70,7 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             if dryRun {
                 output.info("[DRY RUN] Would create version \(version) for app \(id)")
@@ -92,7 +107,7 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             if dryRun {
                 output.info("[DRY RUN] Would update version \(versionId)")
                 return
@@ -140,7 +155,7 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             try await Self.execute(
                 client: client, output: output, versionId: versionId,
                 dryRun: dryRun, legacySubmit: legacySubmit)
@@ -217,7 +232,7 @@ public struct VersionsCommand: AsyncParsableCommand {
             }
 
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("\(action.capitalized) phased release")
             do {
                 // App Store Connect's PATCH endpoint takes the phased-release resource ID,
@@ -260,7 +275,7 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             if dryRun {
                 output.info("[DRY RUN] Would reject version \(versionId)")
                 return

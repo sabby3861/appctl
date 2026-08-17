@@ -69,7 +69,12 @@ fi
 
 $SUDO install -d "$PREFIX/bin" "$PREFIX/share/man/man1"
 $SUDO install -m 755 appctl "$PREFIX/bin/appctl"
-$SUDO install -m 644 appctl.1 "$PREFIX/share/man/man1/appctl.1"
+# Tarballs since the multi-page manual carry man/*.1; older ones a single appctl.1.
+if [[ -d man ]]; then
+  $SUDO install -m 644 man/*.1 "$PREFIX/share/man/man1/"
+else
+  $SUDO install -m 644 appctl.1 "$PREFIX/share/man/man1/appctl.1"
+fi
 
 "$PREFIX/bin/appctl" version --short > /dev/null || fail "installed binary failed to run"
 echo "Installed appctl ${VERSION} to ${PREFIX}/bin/appctl"

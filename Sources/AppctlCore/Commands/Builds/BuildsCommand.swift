@@ -18,7 +18,7 @@ public struct BuildsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             try await Self.execute(
                 client: client, output: output, appId: appId ?? config.defaultAppID,
                 state: state, version: version, limit: pagination.limit,
@@ -73,7 +73,7 @@ public struct BuildsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching build details")
             do {
                 let r: APIResponse<Build> = try await client.get("builds/\(buildId)")
@@ -124,7 +124,7 @@ public struct BuildsCommand: AsyncParsableCommand {
 
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let appID = try resolveAppID(appId, config: config)
             guard Self.ascPlatform(for: platform) != nil else {
                 throw AppctlError.invalidInput(
@@ -328,7 +328,7 @@ public struct BuildsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Setting export compliance")
             let body = ComplianceUpdateRequest(
                 data: ComplianceUpdateData(

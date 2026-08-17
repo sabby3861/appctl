@@ -7,6 +7,9 @@ import Foundation
 public enum AppctlError: LocalizedError, CustomStringConvertible {
 
     case missingAPIKey(detail: String)
+    /// The developer account has an unsigned agreement blocking API access
+    /// (Apple reports it as a FORBIDDEN error mentioning the agreement).
+    case agreementPending(detail: String)
     case invalidKeyFile(path: String, reason: String)
     case jwtGenerationFailed(reason: String)
     case tokenExpired
@@ -22,6 +25,8 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case apiError(operation: String, statusCode: Int, errors: [APIErrorDetail])
     case resourceNotFound(type: String, identifier: String)
     case conflictError(resource: String, detail: String)
+    /// A batch operation completed for some items and failed for others.
+    case partialFailure(operation: String, failed: [String])
     case fileNotFound(path: String)
     case fileNotReadable(path: String)
     case fileWriteError(path: String, reason: String)
@@ -30,6 +35,7 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case profileMismatch(bundleID: String, profileBundleID: String)
     case signingIdentityNotFound(name: String)
     case invalidInput(field: String, value: String, expected: String)
+    case charLimitExceeded(field: String, limit: Int, actual: Int)
     case operationCancelled
     case unsupportedOperation(name: String, reason: String)
     case keychainError(operation: String, service: String, status: OSStatus, reason: String)
@@ -44,11 +50,22 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     public var description: String { diagnosticMessage }
     public var errorDescription: String? { diagnosticMessage }
 
+    /// What/Why/Fix text plus the stable code and its docs anchor. A user cancel
+    /// carries no code line — there is nothing to look up.
     public var diagnosticMessage: String {
+        if case .operationCancelled = self { return baseMessage }
+        let code = errorCode
+        return baseMessage + "\n  Code: \(code.rawValue) — \(code.docsURL)"
+    }
+
+    private var baseMessage: String {
         switch self {
         case .missingAPIKey(let detail):
             return
                 "✗ Missing API Key\n  \(detail)\n  Fix: Run `appctl auth setup` or set APPCTL_KEY_ID, APPCTL_ISSUER_ID, and APPCTL_PRIVATE_KEY_PATH environment variables."
+        case .agreementPending(let detail):
+            return
+                "✗ Developer Agreement Pending\n  \(detail)\n  Fix: An Account Holder must accept the latest agreement in App Store Connect → Business (or Agreements, Tax, and Banking), then retry."
         case .invalidKeyFile(let path, let reason):
             return
                 "✗ Invalid API Key File\n  Path: \(path)\n  Reason: \(reason)\n  Fix: Download a fresh .p8 key file from App Store Connect → Users and Access → Keys."
@@ -105,6 +122,10 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
                 "✗ \(type) Not Found\n  Identifier: \(identifier)\n  Fix: Verify it exists. Run `appctl \(type.lowercased())s list` to see available items."
         case .conflictError(let resource, let detail):
             return "✗ Conflict\n  \(resource): \(detail)\n  Fix: Another operation may be in progress. Wait and retry."
+        case .partialFailure(let operation, let failed):
+            let items = failed.map { "  • \($0)" }.joined(separator: "\n")
+            return
+                "✗ Partial Failure\n  \(operation) failed for:\n\(items)\n  Fix: The warnings above show each cause. Fix them and re-run — completed items are safe to repeat."
         case .fileNotFound(let path):
             return "✗ File Not Found\n  Path: \(path)"
         case .fileNotReadable(let path):
@@ -126,6 +147,9 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
             return "✗ Signing Identity Not Found\n  Identity: \(name)\n  Fix: Install the certificate in your Keychain."
         case .invalidInput(let field, let value, let expected):
             return "✗ Invalid Input\n  Field: \(field)\n  Value: \"\(value)\"\n  Expected: \(expected)"
+        case .charLimitExceeded(let field, let limit, let actual):
+            return
+                "✗ Character Limit Exceeded\n  Field: \(field)\n  Length: \(actual) characters (limit \(limit))\n  Fix: Shorten the text by \(actual - limit) character\(actual - limit == 1 ? "" : "s") and re-run. Nothing was pushed."
         case .operationCancelled:
             return "Operation cancelled."
         case .unsupportedOperation(let name, let reason):

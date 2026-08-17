@@ -16,7 +16,7 @@ public struct AppsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             try await Self.execute(
                 client: client, output: output, bundleId: bundleId, name: name,
                 limit: pagination.limit, pageSize: pagination.pageSize)
@@ -59,7 +59,7 @@ public struct AppsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching app details")
             do {
                 let app: App

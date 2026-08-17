@@ -23,7 +23,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             try await Self.execute(
                 client: client, output: output, appId: id, version: version, buildId: buildId,
@@ -186,7 +186,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let s = output.startSpinner("Finding latest build")
             let builds: APIListResponse<Build> = try await client.getList(
@@ -272,14 +272,17 @@ public struct WorkflowCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Watch for build/review status changes.")
         @Option(name: .long, help: "App ID.") var appId: String?
         @Option(name: .long, help: "Poll interval (seconds).") var interval: Int = 30
-        @Option(name: .long, help: "Max duration (minutes).") var timeout: Int = 120
+        // Renamed from --timeout when the global network --timeout flag landed;
+        // the two would otherwise collide in ArgumentParser's flat namespace.
+        @Option(name: .customLong("max-duration"), help: "Max duration (minutes).")
+        var maxDuration: Int = 120
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            try Self.validate(interval: interval, timeout: timeout)
+            try Self.validate(interval: interval, timeout: maxDuration)
 
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             output.info("Watching app \(id) (Ctrl+C to stop)")
 
@@ -287,7 +290,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
             var lastVersion: [String: String] = [:]
             var consecutiveFailures = 0
             let maxConsecutiveFailures = 3
-            let totalIterations = (timeout * 60) / interval
+            let totalIterations = (maxDuration * 60) / interval
 
             for _ in 0..<totalIterations {
                 do {
@@ -335,10 +338,10 @@ public struct WorkflowCommand: AsyncParsableCommand {
                 }
                 try await Task.sleep(for: .seconds(interval))
             }
-            output.warning("Watch timed out after \(timeout)m")
+            output.warning("Watch timed out after \(maxDuration)m")
         }
 
-        /// Validate before any I/O. The cap on `timeout` prevents `timeout * 60`
+        /// Validate before any I/O. The cap on the duration prevents `* 60`
         /// further down from overflowing.
         static func validate(interval: Int, timeout: Int) throws {
             guard interval > 0 else {
@@ -350,7 +353,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
             }
             guard (1...1440).contains(timeout) else {
                 throw AppctlError.invalidInput(
-                    field: "--timeout",
+                    field: "--max-duration",
                     value: String(timeout),
                     expected: "1 to 1440 minutes (24 hours)"
                 )
@@ -366,7 +369,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching builds")
             let rA: APIResponse<Build> = try await client.get("builds/\(buildA)")
             let rB: APIResponse<Build> = try await client.get("builds/\(buildB)")

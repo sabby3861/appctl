@@ -167,7 +167,7 @@ public struct AuthCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Verifying credentials")
             do {
                 let r: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
@@ -186,7 +186,7 @@ public struct AuthCommand: AsyncParsableCommand {
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let config = try globals.resolvedConfig()
             let masked = config.issuerID.map { id in id.count > 8 ? "\(id.prefix(4))…\(id.suffix(4))" : id }
             let store = KeychainCredentialStore()
@@ -211,14 +211,29 @@ public struct AuthCommand: AsyncParsableCommand {
     }
 }
 
-/// Shared `--key-id`, `--issuer-id`, `--format`, `--verbose`, `--no-color` flags
-/// composed into command groups via `@OptionGroup`. Internal because no SemVer
-/// commitment is intended outside the AppctlCore module.
+/// Shared global flags composed into command groups via `@OptionGroup`. Internal
+/// because no SemVer commitment is intended outside the AppctlCore module.
 struct GlobalOptions: ParsableArguments {
     @Option(name: .long, help: "API Key ID.") var keyId: String?
     @Option(name: .long, help: "Issuer ID.") var issuerId: String?
     @Option(name: .long, help: "Path to .p8 key file.") var privateKeyPath: String?
-    @Option(name: .long, help: "Output format: text, json, table, csv.") var format: String?
+    @Option(name: .long, help: "Output format: text, json, table, markdown, csv.")
+    var output: String?
+    /// Deprecated spelling of --output, kept hidden for compatibility.
+    @Option(name: .long, help: .hidden) var format: String?
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Filter JSON output: dot paths, [N], [*], [?field=='x']. Implies --output json.",
+            valueName: "expr"))
+    var query: String?
+    @Flag(name: .long, help: "Suppress progress and success chatter on stderr.")
+    var quiet = false
+    @Flag(
+        name: .long,
+        help: "Assume \"yes\" for confirmation prompts. Typed-confirmation commands refuse it.")
+    var yes = false
+    @Option(name: .long, help: "Network timeout in seconds.") var timeout: Double?
     @Flag(name: .long, help: "Show verbose output.") var verbose = false
     @Flag(name: .long, help: "Disable colored output.") var noColor = false
     /// Hidden rehearsal mode: serves offline fixtures instead of touching credentials
@@ -227,26 +242,66 @@ struct GlobalOptions: ParsableArguments {
     @Flag(name: .long, help: .hidden) var mock = false
     init() {}
 
-    var resolvedFormat: OutputFormat {
-        if let f = format { return OutputFormat(rawValue: f) ?? .text }
-        return (!ConfigLoader.isTerminal() || ConfigLoader.isCI()) ? .json : .text
+    private var formatArgument: String? { output ?? format }
+
+    func resolvedOutputFormat() throws -> OutputFormat {
+        guard let f = formatArgument else {
+            if query != nil { return .json }
+            return (!ConfigLoader.isTerminal() || ConfigLoader.isCI()) ? .json : .text
+        }
+        guard let parsed = OutputFormat(rawValue: f) else {
+            throw AppctlError.invalidInput(
+                field: "--output", value: f,
+                expected: OutputFormat.allCases.map(\.rawValue).joined(separator: ", "))
+        }
+        if query != nil, parsed != .json {
+            throw AppctlError.invalidInput(
+                field: "--query", value: "with --output \(f)",
+                expected: "--query filters JSON output; drop --output or use --output json")
+        }
+        return parsed
     }
+
+    func outputFormatter() throws -> OutputFormatter {
+        OutputFormatter(
+            format: try resolvedOutputFormat(), noColor: noColor, quiet: quiet,
+            query: try query.map(QueryEvaluator.init(parsing:)))
+    }
+
+    /// Explicitly-passed flags that suggested `next` commands must carry so they run
+    /// against the same account in the same output mode. When a profile/--team
+    /// concept lands (G6), extend this list — `NextActions` call sites take it verbatim.
+    var propagatedFlags: [String] {
+        var flags: [String] = []
+        if let keyId { flags += ["--key-id", keyId] }
+        if let issuerId { flags += ["--issuer-id", issuerId] }
+        if let privateKeyPath { flags += ["--private-key-path", privateKeyPath] }
+        if let f = formatArgument { flags += ["--output", f] }
+        if mock { flags.append("--mock") }
+        return flags
+    }
+
+    func nextActions() -> NextActions { NextActions(propagatedFlags: propagatedFlags) }
 
     func resolvedConfig() throws -> AppctlConfig {
         try ConfigLoader.load(
             keyIDOverride: keyId, issuerIDOverride: issuerId,
-            privateKeyPathOverride: privateKeyPath, formatOverride: format,
+            privateKeyPathOverride: privateKeyPath, formatOverride: formatArgument,
             verboseOverride: verbose, noColorOverride: noColor)
     }
 
-    /// The only place a concrete client is constructed. `timeout` overrides the
-    /// configured value for callers that need a snappier check (doctor).
+    /// The only place a concrete client is constructed. The `timeout` parameter
+    /// overrides both the --timeout flag and the configured value, for callers
+    /// that need a snappier check (doctor).
     func apiClient(timeout: TimeInterval? = nil) throws -> (any AppStoreConnectClient, AppctlConfig) {
         if mock {
             return (FixtureClient(), FixtureClient.mockConfig(verbose: verbose, noColor: noColor))
         }
         let config = try resolvedConfig()
         let gen = try AuthStore.createGenerator(from: config)
-        return (APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: timeout ?? config.timeout), config)
+        let effectiveTimeout = timeout ?? self.timeout ?? config.timeout
+        return (
+            APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: effectiveTimeout), config
+        )
     }
 }

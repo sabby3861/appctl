@@ -7,7 +7,7 @@ public struct DoctorCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
     public init() {}
     public func run() async throws {
-        let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+        let output = try globals.outputFormatter()
         var s = StandardError.shared
         print("\n  \(output.useColor ? "\u{001B}[1mappctl doctor\u{001B}[0m" : "appctl doctor")", to: &s)
         print("  Checking your environment...\n", to: &s)

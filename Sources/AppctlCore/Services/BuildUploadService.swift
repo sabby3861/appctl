@@ -34,10 +34,15 @@ public struct BuildUploadService: Sendable {
         let fileMD5 = try UploadFileAccess.md5Hex(of: archive)
 
         var state: UploadSidecarState
-        if let existing = UploadSidecar.load(for: archive),
-            existing.matches(fileSize: fileSize, fileMD5: fileMD5, appID: appID)
-        {
-            if Self.hasExpiredPendingOperations(existing) {
+        if let existing = UploadSidecar.load(for: archive) {
+            if !existing.matches(fileSize: fileSize, fileMD5: fileMD5, appID: appID) {
+                // A changed archive is legitimate (rebuild), not an error — but the
+                // restart must be visible, or a user watching a "resumed" upload
+                // start from part 1 will assume the sidecar is broken.
+                await client.logWarning(
+                    "Source file changed since last attempt — restarting upload from scratch.")
+                state = UploadSidecarState(fileSize: fileSize, fileMD5: fileMD5, appID: appID)
+            } else if Self.hasExpiredPendingOperations(existing) {
                 // Expired pre-signed URLs fail both uploads and the commit, so the
                 // only way forward is a fresh reservation — resuming would burn the
                 // retry budget on requests that can never succeed.
@@ -185,7 +190,8 @@ public struct BuildUploadService: Sendable {
             } catch {
                 lastError = error
                 if attempt < maxPartAttempts - 1 {
-                    try await Task.sleep(for: APIClient.backoffDelay(attempt: attempt, base: retryBaseDelay))
+                    try await Task.sleep(
+                        for: RetryStrategy.delay(for: .transport, attempt: attempt, base: retryBaseDelay))
                 }
             }
         }

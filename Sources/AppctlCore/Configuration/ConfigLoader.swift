@@ -33,7 +33,7 @@ public struct AppctlConfig: Sendable {
     }
 }
 
-public enum OutputFormat: String, Sendable, CaseIterable { case text, json, table, csv }
+public enum OutputFormat: String, Sendable, CaseIterable { case text, json, table, markdown, csv }
 
 public struct ConfigLoader {
     public static let searchPaths: [String] = {

@@ -3,15 +3,22 @@ import Foundation
 public struct OutputFormatter: Sendable {
     public let format: OutputFormat
     public let useColor: Bool
+    private let quiet: Bool
+    private let query: QueryEvaluator?
 
-    public init(format: OutputFormat = .text, noColor: Bool = false) {
+    public init(
+        format: OutputFormat = .text, noColor: Bool = false,
+        quiet: Bool = false, query: QueryEvaluator? = nil
+    ) {
         self.format = format
         self.useColor = !noColor && isatty(STDOUT_FILENO) == 1
+        self.quiet = quiet
+        self.query = query
     }
 
-    /// In JSON mode all stderr decoration is suppressed so piped consumers get clean
-    /// output. Real errors still surface — they are thrown and printed by ArgumentParser.
-    private var isQuiet: Bool { format == .json }
+    /// In JSON and quiet modes all stderr decoration is suppressed so piped consumers
+    /// get clean output. Real errors still surface — they are thrown and exit non-zero.
+    private var isQuiet: Bool { quiet || format == .json }
 
     public func success(_ msg: String) {
         guard !isQuiet else { return }
@@ -33,34 +40,73 @@ public struct OutputFormatter: Sendable {
         printErr("\(useColor ? "\u{001B}[34m●\u{001B}[0m" : "●") \(msg)")
     }
 
-    public func printList<T>(_ items: [T], columns: [Column<T>], emptyMessage: String = "No items found.") {
+    public func printList<T>(
+        _ items: [T], columns: [Column<T>], emptyMessage: String = "No items found.",
+        warnings: [String] = [], next: [String: String]? = nil
+    ) {
+        if format == .json {
+            let rows = items.map { item in
+                JSONValue.object(
+                    Dictionary(
+                        uniqueKeysWithValues: columns.map {
+                            (Self.jsonKey($0.header), JSONValue.string($0.jsonValue(item)))
+                        }))
+            }
+            printEnvelope(data: .array(rows), warnings: warnings, next: next)
+            return
+        }
         guard !items.isEmpty else {
             printErr(emptyMessage)
             return
         }
         switch format {
-        case .json: printJSON(items, columns: columns)
+        case .json: break
         case .csv: printCSV(items, columns: columns)
+        case .markdown: printMarkdown(items, columns: columns)
         case .text, .table: printTable(items, columns: columns)
         }
     }
 
-    public func printDetail(fields: [(label: String, value: String)]) {
-        if format == .json {
-            var d: [String: String] = [:]
-            for f in fields { d[f.label.lowercased().replacingOccurrences(of: " ", with: "_")] = f.value }
-            if let data = try? JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]),
-                let s = String(data: data, encoding: .utf8)
-            {
-                print(s)
+    public func printDetail(
+        fields: [(label: String, value: String)],
+        warnings: [String] = [], next: [String: String]? = nil
+    ) {
+        switch format {
+        case .json:
+            var d: [String: JSONValue] = [:]
+            for f in fields { d[Self.jsonKey(f.label)] = .string(f.value) }
+            printEnvelope(data: .object(d), warnings: warnings, next: next)
+        case .markdown:
+            for f in fields {
+                let label = f.label.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+                print("- **\(label)** \(f.value)")
             }
-            return
+        case .text, .table, .csv:
+            let maxW = fields.map { $0.label.count }.max() ?? 0
+            for f in fields {
+                let label = f.label.padding(toLength: maxW + 1, withPad: " ", startingAt: 0)
+                print(useColor ? "\u{001B}[1m\(label)\u{001B}[0m \(f.value)" : "\(label) \(f.value)")
+            }
         }
-        let maxW = fields.map { $0.label.count }.max() ?? 0
-        for f in fields {
-            let label = f.label.padding(toLength: maxW + 1, withPad: " ", startingAt: 0)
-            print(useColor ? "\u{001B}[1m\(label)\u{001B}[0m \(f.value)" : "\(label) \(f.value)")
+    }
+
+    /// Every JSON-mode result leaves through here: the versioned envelope, with
+    /// `--query` applied to `data` before printing (JMESPath semantics — a
+    /// non-matching query yields null, never an error).
+    public func printEnvelope(
+        data: JSONValue, warnings: [String] = [], next: [String: String]? = nil
+    ) {
+        let queried = query.map { $0.evaluate(data) } ?? data
+        let envelope = Envelope(data: queried, warnings: warnings, next: next)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        if let payload = try? encoder.encode(envelope) {
+            print(String(decoding: payload, as: UTF8.self))
         }
+    }
+
+    private static func jsonKey(_ header: String) -> String {
+        header.lowercased().replacingOccurrences(of: " ", with: "_")
     }
 
     public func startSpinner(_ message: String) -> SpinnerHandle {
@@ -69,17 +115,12 @@ public struct OutputFormatter: Sendable {
         return s
     }
 
-    private func printJSON<T>(_ items: [T], columns: [Column<T>]) {
-        let arr = items.map { item in
-            Dictionary(
-                uniqueKeysWithValues: columns.map {
-                    ($0.header.lowercased().replacingOccurrences(of: " ", with: "_"), $0.value(item))
-                })
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: arr, options: [.prettyPrinted, .sortedKeys]),
-            let s = String(data: data, encoding: .utf8)
-        {
-            print(s)
+    private func printMarkdown<T>(_ items: [T], columns: [Column<T>]) {
+        let escape = { (s: String) in s.replacingOccurrences(of: "|", with: "\\|") }
+        print("| " + columns.map { escape($0.header) }.joined(separator: " | ") + " |")
+        print("|" + columns.map { _ in "---" }.joined(separator: "|") + "|")
+        for item in items {
+            print("| " + columns.map { escape($0.value(item)) }.joined(separator: " | ") + " |")
         }
     }
 
@@ -119,9 +160,17 @@ public struct OutputFormatter: Sendable {
 public struct Column<T>: Sendable {
     public let header: String
     public let value: @Sendable (T) -> String
-    public init(header: String, value: @escaping @Sendable (T) -> String) {
+    /// JSON-mode override for columns whose display value is decorated
+    /// (truncated IDs, emoji states): machine output needs the raw value.
+    public let jsonValue: @Sendable (T) -> String
+
+    public init(
+        header: String, value: @escaping @Sendable (T) -> String,
+        jsonValue: (@Sendable (T) -> String)? = nil
+    ) {
         self.header = header
         self.value = value
+        self.jsonValue = jsonValue ?? value
     }
 }
 

@@ -136,8 +136,9 @@ import Testing
 
 @Suite("Output") struct OutputTests {
     @Test func formatCases() {
-        #expect(OutputFormat.allCases.count == 4)
+        #expect(OutputFormat.allCases.count == 5)
         #expect(OutputFormat(rawValue: "json") == .json)
+        #expect(OutputFormat(rawValue: "markdown") == .markdown)
         #expect(OutputFormat(rawValue: "xml") == nil)
     }
 }
@@ -220,36 +221,64 @@ import Testing
     }
 }
 
-@Suite("APIClient retry math") struct RetryTests {
+@Suite("RetryStrategy") struct RetryTests {
+    /// Pin jitter to its minimum so the exponential ladder is exact:
+    /// exp/2 + 0 = base × 2^attempt / 2.
+    private let noJitter: (ClosedRange<Double>) -> Double = { $0.lowerBound }
+    /// Pin jitter to its maximum: exp/2 + exp/2 = the full exponential value.
+    private let maxJitter: (ClosedRange<Double>) -> Double = { $0.upperBound }
+
     @Test func backoffDoublesEachAttempt() {
-        // 1s, 2s, 4s, 8s for attempts 0, 1, 2, 3 with base = 1s.
-        #expect(APIClient.backoffDelay(attempt: 0, base: 1.0) == .seconds(1.0))
-        #expect(APIClient.backoffDelay(attempt: 1, base: 1.0) == .seconds(2.0))
-        #expect(APIClient.backoffDelay(attempt: 2, base: 1.0) == .seconds(4.0))
-        #expect(APIClient.backoffDelay(attempt: 3, base: 1.0) == .seconds(8.0))
+        for (attempt, expected) in [(0, 1.0), (1, 2.0), (2, 4.0), (3, 8.0)] {
+            #expect(
+                RetryStrategy.delay(for: .rateLimited, attempt: attempt, base: 1.0, random: maxJitter)
+                    == .seconds(expected))
+        }
     }
 
-    @Test func backoffScalesWithBase() {
-        #expect(APIClient.backoffDelay(attempt: 0, base: 0.5) == .seconds(0.5))
-        #expect(APIClient.backoffDelay(attempt: 2, base: 0.5) == .seconds(2.0))
+    @Test func jitterSpansHalfTheExponential() {
+        // Equal jitter: the delay lands in [exp/2, exp], never below half the backoff.
+        #expect(
+            RetryStrategy.delay(for: .serverError, attempt: 2, base: 1.0, random: noJitter)
+                == .seconds(2.0))
+        #expect(
+            RetryStrategy.delay(for: .serverError, attempt: 2, base: 1.0, random: maxJitter)
+                == .seconds(4.0))
+    }
+
+    @Test func delayNeverExceedsCap() {
+        // Attempt 30 with base 1 would be 2^30 seconds without the cap.
+        #expect(
+            RetryStrategy.delay(for: .rateLimited, attempt: 30, base: 1.0, random: maxJitter)
+                == .seconds(RetryStrategy.delayCap))
+    }
+
+    @Test func retryAfterIsHonoredVerbatimWithinTheCap() {
+        // Server-directed waits take precedence over the exponential and get no jitter.
+        #expect(
+            RetryStrategy.delay(for: .rateLimited, attempt: 0, retryAfter: 15, random: maxJitter)
+                == .seconds(15.0))
     }
 
     @Test func retryAfterClampsAboveMaximum() {
         // A hostile or buggy server could send a huge Retry-After. We must not honor it
-        // beyond the configured maximum.
-        #expect(APIClient.clampedRetryAfter(999_999, maximum: 60) == 60)
-        #expect(APIClient.clampedRetryAfter(60, maximum: 60) == 60)
+        // beyond the cap.
+        #expect(
+            RetryStrategy.delay(for: .rateLimited, attempt: 0, retryAfter: 999_999)
+                == .seconds(RetryStrategy.delayCap))
     }
 
     @Test func retryAfterClampsBelowZero() {
-        // Negative values would be interpreted as instant Task.sleep(for: .seconds(-1)),
+        // Negative values would be interpreted as Task.sleep(for: .seconds(-1)),
         // which traps. Always clamp to non-negative.
-        #expect(APIClient.clampedRetryAfter(-5, maximum: 60) == 0)
+        #expect(
+            RetryStrategy.delay(for: .rateLimited, attempt: 0, retryAfter: -5) == .seconds(0.0))
     }
 
-    @Test func retryAfterPassesThroughInRange() {
-        #expect(APIClient.clampedRetryAfter(15, maximum: 60) == 15)
-        #expect(APIClient.clampedRetryAfter(0, maximum: 60) == 0)
+    @Test func attemptBudgetsPerCategory() {
+        #expect(RetryStrategy.rateLimited.maxAttempts == 5)
+        #expect(RetryStrategy.serverError.maxAttempts == 3)
+        #expect(RetryStrategy.transport.maxAttempts == 3)
     }
 }
 

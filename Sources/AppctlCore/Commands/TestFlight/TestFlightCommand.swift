@@ -14,7 +14,7 @@ public struct TestFlightCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching beta groups")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -49,7 +49,7 @@ public struct TestFlightCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let (limit, pageSize) = try pagination.validated()
             let spinner = output.startSpinner("Fetching testers")
             var q: [URLQueryItem] = [
@@ -86,7 +86,7 @@ public struct TestFlightCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Distributing build")
             do {
                 try await client.postVoid(

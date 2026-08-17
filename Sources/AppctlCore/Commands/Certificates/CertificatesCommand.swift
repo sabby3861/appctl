@@ -15,7 +15,7 @@ public struct CertificatesCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching certificates")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -72,7 +72,7 @@ public struct CertificatesCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching profiles")
             do {
                 let r: APIListResponse<Profile> = try await client.getList(
@@ -107,7 +107,7 @@ public struct CertificatesCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching devices")
             do {
                 let r: APIListResponse<Device> = try await client.getList(
@@ -138,7 +138,7 @@ public struct CertificatesCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching bundle IDs")
             do {
                 let r: APIListResponse<BundleID> = try await client.getList(

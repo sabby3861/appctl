@@ -14,7 +14,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching localizations")
             do {
                 let r: APIListResponse<VersionLocalization> = try await client.getList(
@@ -49,7 +49,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching localization")
             do {
                 let r: APIResponse<VersionLocalization> = try await client.get(
@@ -80,7 +80,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             if let d = appDescription, d.count > 4000 {
                 throw AppctlError.invalidInput(field: "description", value: "\(d.count) chars", expected: "Max 4000")
             }
@@ -121,7 +121,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             guard ["pull", "push"].contains(direction) else {
                 throw AppctlError.invalidInput(field: "direction", value: direction, expected: "'pull' or 'push'")
             }
@@ -156,6 +156,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                 }
                 output.info("Metadata saved to \(dir)/ — track these in git.")
             } else {
+                var failedLocales: [String] = []
                 for loc in r.data {
                     guard let locale = loc.attributes?.locale else { continue }
                     let locDir = "\(dir)/\(locale)"
@@ -189,9 +190,15 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         )
                         output.success("Pushed \(locale)")
                     } catch {
-                        // TODO(V5): partial push failures still exit 0 — fold into the V5 error-taxonomy/exit-code contract.
+                        // Keep pushing the remaining locales; the aggregate failure
+                        // below makes the partial result exit non-zero.
+                        failedLocales.append(locale)
                         output.warning("Failed to push \(locale): \(error.localizedDescription)")
                     }
+                }
+                if !failedLocales.isEmpty {
+                    throw AppctlError.partialFailure(
+                        operation: "localizations push", failed: failedLocales)
                 }
             }
         }

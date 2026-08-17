@@ -19,7 +19,7 @@ public struct PricingCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let spinner = output.startSpinner("Fetching availability settings")
             do {
@@ -44,7 +44,7 @@ public struct PricingCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching territories")
             do {
                 let r: APIListResponse<Territory> = try await client.getList(
@@ -83,7 +83,7 @@ public struct IAPCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let spinner = output.startSpinner("Fetching IAPs")
             do {
@@ -116,7 +116,7 @@ public struct IAPCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let spinner = output.startSpinner("Fetching subscriptions")
             do {
@@ -168,7 +168,7 @@ public struct UsersCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching users")
             var q: [URLQueryItem] = [URLQueryItem(name: "fields[users]", value: "firstName,lastName,email,roles")]
             if let r = role { q.append(URLQueryItem(name: "filter[roles]", value: r.uppercased())) }
@@ -229,7 +229,7 @@ public struct ReviewCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let (limit, pageSize) = try pagination.validated()
             let spinner = output.startSpinner("Fetching reviews")
@@ -269,7 +269,7 @@ public struct ReviewCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             if response.count > 5970 {
                 throw AppctlError.invalidInput(
                     field: "response", value: "\(response.count) chars", expected: "Max 5970")

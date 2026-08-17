@@ -305,7 +305,8 @@ public struct ScreenshotUploadService: Sendable {
             } catch {
                 lastError = error
                 if attempt < maxPartAttempts - 1 {
-                    try await Task.sleep(for: APIClient.backoffDelay(attempt: attempt, base: retryBaseDelay))
+                    try await Task.sleep(
+                        for: RetryStrategy.delay(for: .transport, attempt: attempt, base: retryBaseDelay))
                 }
             }
         }

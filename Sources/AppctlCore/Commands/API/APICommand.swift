@@ -77,6 +77,12 @@ public struct APICommand: AsyncParsableCommand {
                 expected: "METHOD PATH (e.g. `appctl api GET /v1/apps`), or --list / --schema / --update-schema"
             )
         }
+        // The DELETE gate is a typed confirmation: --yes must not soften it.
+        if globals.yes, method.uppercased() == "DELETE" {
+            throw AppctlError.invalidInput(
+                field: "--yes", value: "with DELETE",
+                expected: "DELETE requires the explicit --confirm gate; --yes is refused for destructive operations")
+        }
         let (limit, pageSize) = try pagination.validated()
         let inputBody = try input.map { try Self.readInputFile($0) }
         let (client, _) = try globals.apiClient()
@@ -89,10 +95,15 @@ public struct APICommand: AsyncParsableCommand {
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let payload =
-            raw
-            ? try encoder.encode(outcome.document)
-            : try encoder.encode(Envelope(data: outcome.document, next: outcome.next))
+        let document =
+            try globals.query.map(QueryEvaluator.init(parsing:))
+            .map { $0.evaluate(outcome.document) } ?? outcome.document
+        if raw {
+            print(String(decoding: try encoder.encode(document), as: UTF8.self))
+            return
+        }
+        let next = outcome.next.map { globals.nextActions().nextPage(url: $0) }
+        let payload = try encoder.encode(Envelope(data: document, next: next))
         print(String(decoding: payload, as: UTF8.self))
     }
 

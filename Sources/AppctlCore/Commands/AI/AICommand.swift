@@ -27,7 +27,7 @@ public struct AICommand: AsyncParsableCommand {
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             try Self.validate(maxLength: maxLength)
             guard Self.isValidGitRef(since) else {
                 throw AppctlError.invalidInput(
@@ -171,7 +171,7 @@ public struct AICommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, config) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
             let spinner = output.startSpinner("Analyzing metadata")
             let r: APIResponse<App> = try await client.get(
@@ -202,7 +202,7 @@ public struct AICommand: AsyncParsableCommand {
         private static let displayLocale = Locale(identifier: "en_US")
 
         func run() async throws {
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let targets = locales.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             output.info("Translation scaffolding for \(targets.count) locales")
             for locale in targets {

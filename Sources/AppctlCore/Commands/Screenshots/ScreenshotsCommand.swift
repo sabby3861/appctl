@@ -20,7 +20,7 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             _ = try await Self.execute(
                 client: client, output: output, appId: appId, version: version,
                 path: path, dryRun: dryRun)
@@ -57,7 +57,7 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("Fetching screenshots")
             do {
                 let r: APIListResponse<ScreenshotSet> = try await client.getList(
@@ -86,7 +86,7 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             if dryRun {
                 output.info("[DRY RUN] Would delete screenshot \(screenshotId)")
                 return

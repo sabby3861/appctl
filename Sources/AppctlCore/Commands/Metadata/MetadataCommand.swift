@@ -67,7 +67,7 @@ public struct MetadataCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             try await Self.execute(
                 client: client, output: output, appId: appId, version: version, path: path,
                 dryRun: dryRun)
@@ -123,7 +123,7 @@ public struct MetadataCommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
-            let output = OutputFormatter(format: globals.resolvedFormat, noColor: globals.noColor)
+            let output = try globals.outputFormatter()
             _ = try await Self.execute(
                 client: client, output: output, appId: appId, version: version, path: path,
                 dryRun: dryRun)
@@ -256,9 +256,9 @@ public struct MetadataCommand: AsyncParsableCommand {
                     // Inverse of pull: strip exactly the one newline pull appended.
                     let value = raw.hasSuffix("\n") ? String(raw.dropLast()) : raw
                     if let limit = attribute.characterLimit, value.count > limit.limit {
-                        throw AppctlError.invalidInput(
-                            field: "\(entry)/\(file)", value: "\(value.count) chars",
-                            expected: "Max \(limit.limit) characters for \(limit.field)")
+                        throw AppctlError.charLimitExceeded(
+                            field: "\(entry)/\(file) (\(limit.field))",
+                            limit: limit.limit, actual: value.count)
                     }
                     if !value.isEmpty { values.append((attribute, value)) }
                 }

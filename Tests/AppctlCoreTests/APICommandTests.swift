@@ -293,7 +293,7 @@ private let base = "https://api.appstoreconnect.apple.com"
         #expect(object["apiVersion"] as? String == "appctl/v1")
         #expect(object["warnings"] as? [String] == [])
         #expect(object["next"] is NSNull, "next is always present, null when exhausted")
-        #expect(object["error"] == nil, "error is omitted until V5's taxonomy lands")
+        #expect(object["error"] == nil, "error appears only on failure envelopes")
         #expect(object["data"] != nil)
     }
 }

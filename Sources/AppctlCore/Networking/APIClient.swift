@@ -12,22 +12,27 @@ public final class APIClient: @unchecked Sendable {
     /// would trip the API session's `timeoutIntervalForResource` (3× the request
     /// timeout, 90s by default), so uploads get their own generous resource window.
     private let uploadSession: URLSession
+    private let transport: any HTTPTransport
     private let verbose: Bool
     private let decoder: JSONDecoder
-    private let maxRetries = 3
-    private let baseRetryDelay: TimeInterval = 1.0
-    /// Upper bound on how long we'll honor a `Retry-After` header — protects
-    /// against a misconfigured or hostile server pinning us asleep for hours.
-    private let maxRetryAfter: TimeInterval = 60
+    private let retryBaseDelay: TimeInterval
 
-    public init(jwtGenerator: JWTGenerator, verbose: Bool = false, timeout: TimeInterval = 30) {
+    /// `transport` defaults to the real URLSession; tests inject a scripted one
+    /// (and a near-zero `retryBaseDelay`) to exercise the retry policy without
+    /// a network or real sleeps.
+    public init(
+        jwtGenerator: JWTGenerator, verbose: Bool = false, timeout: TimeInterval = 30,
+        transport: (any HTTPTransport)? = nil, retryBaseDelay: TimeInterval = 1.0
+    ) {
         self.jwtGenerator = jwtGenerator
         self.verbose = verbose
+        self.retryBaseDelay = retryBaseDelay
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout * 3
         config.httpAdditionalHeaders = ["User-Agent": "appctl/\(AppctlVersion.current) (Swift; macOS)"]
         self.session = URLSession(configuration: config)
+        self.transport = transport ?? URLSessionTransport(session: session)
         let uploadConfig = URLSessionConfiguration.default
         uploadConfig.timeoutIntervalForRequest = 300
         uploadConfig.timeoutIntervalForResource = 3600
@@ -123,21 +128,32 @@ public final class APIClient: @unchecked Sendable {
         return req
     }
 
+    /// Failure budgets are tracked per `RetryStrategy` category: a request that
+    /// waits out a 429 still has its full 5xx and transport budgets. `backoff`
+    /// consumes one unit and reports whether another attempt is allowed.
     private func executeWithRetry<T: Decodable>(_ request: URLRequest) async throws -> T {
-        var lastError: Error?
-        for attempt in 0..<maxRetries {
+        var failures: [RetryStrategy: Int] = [:]
+
+        func backoff(_ strategy: RetryStrategy, retryAfter: TimeInterval? = nil) async throws -> Bool {
+            let count = failures[strategy, default: 0] + 1
+            failures[strategy] = count
+            guard count < strategy.maxAttempts else { return false }
+            try await Task.sleep(
+                for: RetryStrategy.delay(
+                    for: strategy, attempt: count - 1, retryAfter: retryAfter, base: retryBaseDelay))
+            return true
+        }
+
+        while true {
             do {
                 if verbose {
                     var s = StandardError.shared
+                    let attempt = failures.values.reduce(0, +)
                     print(
                         "  → \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "")\(attempt > 0 ? " (retry \(attempt))" : "")",
                         to: &s)
                 }
-                let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw AppctlError.invalidResponse(
-                        url: request.url?.absoluteString ?? "", reason: "Not an HTTP response.")
-                }
+                let (data, http) = try await transport.data(for: request)
                 if verbose {
                     var s = StandardError.shared
                     print(
@@ -162,17 +178,15 @@ public final class APIClient: @unchecked Sendable {
                     }
                 }
                 if http.statusCode == 429 {
-                    let raw = http.value(forHTTPHeaderField: "Retry-After").flatMap { TimeInterval($0) } ?? 5.0
-                    let wait = Self.clampedRetryAfter(raw, maximum: maxRetryAfter)
-                    if attempt < maxRetries - 1 {
-                        try await Task.sleep(for: .seconds(wait))
-                        continue
-                    }
-                    throw AppctlError.rateLimited(retryAfter: wait)
+                    let retryAfter =
+                        http.value(forHTTPHeaderField: "Retry-After")
+                        .flatMap { TimeInterval($0) } ?? 5.0
+                    if try await backoff(.rateLimited, retryAfter: retryAfter) { continue }
+                    throw AppctlError.rateLimited(
+                        retryAfter: min(retryAfter, RetryStrategy.delayCap))
                 }
-                if http.statusCode >= 500 && attempt < maxRetries - 1 {
-                    try await Task.sleep(for: Self.backoffDelay(attempt: attempt, base: baseRetryDelay))
-                    continue
+                if http.statusCode >= 500 {
+                    if try await backoff(.serverError) { continue }
                 }
                 if let errResp = try? decoder.decode(APIErrorResponse.self, from: data),
                     !errResp.errors.isEmpty
@@ -188,43 +202,22 @@ public final class APIClient: @unchecked Sendable {
             } catch let e as AppctlError { throw e } catch is CancellationError {
                 throw AppctlError.operationCancelled
             } catch let e as URLError {
-                lastError = e
                 switch e.code {
                 case .timedOut:
                     throw AppctlError.timeout(url: request.url?.absoluteString ?? "", duration: request.timeoutInterval)
                 case .notConnectedToInternet, .networkConnectionLost:
                     throw AppctlError.connectionFailed(host: request.url?.host ?? "", reason: "No internet connection.")
                 default:
-                    if attempt < maxRetries - 1 {
-                        try await Task.sleep(for: Self.backoffDelay(attempt: attempt, base: baseRetryDelay))
-                        continue
-                    }
+                    if try await backoff(.transport) { continue }
                     throw AppctlError.connectionFailed(host: request.url?.host ?? "", reason: e.localizedDescription)
                 }
             } catch {
-                lastError = error
-                if attempt < maxRetries - 1 {
-                    try await Task.sleep(for: Self.backoffDelay(attempt: attempt, base: baseRetryDelay))
-                    continue
-                }
+                if try await backoff(.transport) { continue }
+                throw AppctlError.connectionFailed(
+                    host: request.url?.host ?? "api.appstoreconnect.apple.com",
+                    reason: error.localizedDescription)
             }
         }
-        throw lastError
-            ?? AppctlError.connectionFailed(
-                host: "api.appstoreconnect.apple.com", reason: "Failed after \(maxRetries) attempts.")
-    }
-
-    /// Exponential backoff: `base × 2^attempt` seconds. Pure so it can be unit-tested
-    /// without sleeping.
-    static func backoffDelay(attempt: Int, base: TimeInterval) -> Duration {
-        let seconds = base * pow(2.0, Double(attempt))
-        return .seconds(seconds)
-    }
-
-    /// Cap a `Retry-After` header value to a sane maximum so a misconfigured or
-    /// hostile server can't pin us asleep for hours.
-    static func clampedRetryAfter(_ raw: TimeInterval, maximum: TimeInterval) -> TimeInterval {
-        max(0, min(raw, maximum))
     }
 }
 

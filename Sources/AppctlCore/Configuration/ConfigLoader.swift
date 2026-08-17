@@ -9,6 +9,11 @@ public struct AppctlConfig: Sendable {
     public let privateKeyPEM: String?
     public let defaultAppID: String?
     public let defaultBundleID: String?
+    /// Local fastlane-layout directories, relative to the working directory
+    /// unless absolute. Commands with a --path option fall back to these before
+    /// their built-in defaults (./metadata, ./screenshots).
+    public let metadataPath: String?
+    public let screenshotsPath: String?
     public let outputFormat: OutputFormat
     public let verbose: Bool
     public let noColor: Bool
@@ -18,6 +23,7 @@ public struct AppctlConfig: Sendable {
         keyID: String? = nil, issuerID: String? = nil, privateKeyPath: String? = nil,
         privateKeyPEM: String? = nil,
         defaultAppID: String? = nil, defaultBundleID: String? = nil,
+        metadataPath: String? = nil, screenshotsPath: String? = nil,
         outputFormat: OutputFormat = .text, verbose: Bool = false, noColor: Bool = false, timeout: TimeInterval = 30
     ) {
         self.keyID = keyID
@@ -26,6 +32,8 @@ public struct AppctlConfig: Sendable {
         self.privateKeyPEM = privateKeyPEM
         self.defaultAppID = defaultAppID
         self.defaultBundleID = defaultBundleID
+        self.metadataPath = metadataPath
+        self.screenshotsPath = screenshotsPath
         self.outputFormat = outputFormat
         self.verbose = verbose
         self.noColor = noColor
@@ -82,6 +90,8 @@ public struct ConfigLoader {
             privateKeyPEM: privateKeyPEM,
             defaultAppID: defaultAppID,
             defaultBundleID: fileConfig["app.bundle_id"],
+            metadataPath: fileConfig["paths.metadata"],
+            screenshotsPath: fileConfig["paths.screenshots"],
             outputFormat: OutputFormat(rawValue: formatString) ?? .text,
             verbose: verbose,
             noColor: noColor,
@@ -191,6 +201,10 @@ public struct ConfigLoader {
         [app]
         # id = "1234567890"
         # bundle_id = "com.yourcompany.yourapp"
+
+        [paths]
+        # metadata = "fastlane/metadata"
+        # screenshots = "fastlane/screenshots"
 
         [output]
         format = "text"

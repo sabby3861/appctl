@@ -14,16 +14,17 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
             abstract: "Upload screenshots from a fastlane-layout directory (<path>/<locale>/*.png|jpg).")
         @Option(name: .long, help: "App ID.") var appId: String
         @Option(name: .long, help: "Version string (e.g. 2.1.0).") var version: String
-        @Option(name: .long, help: "Screenshots directory.") var path: String = "./screenshots"
+        @Option(name: .long, help: "Screenshots directory (default: paths.screenshots from config, else ./screenshots).")
+        var path: String?
         @Flag(name: .long, help: "Preview without uploading.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            let (client, _) = try globals.apiClient()
+            let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             _ = try await Self.execute(
                 client: client, output: output, appId: appId, version: version,
-                path: path, dryRun: dryRun)
+                path: path ?? config.screenshotsPath ?? "./screenshots", dryRun: dryRun)
         }
 
         static func execute(

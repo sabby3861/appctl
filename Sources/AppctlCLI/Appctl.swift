@@ -28,8 +28,8 @@ struct Appctl: AsyncParsableCommand {
             MetadataCommand.self, ScreenshotsCommand.self, ReviewCommand.self,
             IAPCommand.self, PricingCommand.self,
             UsersCommand.self, WorkflowCommand.self, AICommand.self, PluginCommand.self,
-            APICommand.self, DoctorCommand.self, InitCommand.self, VersionCommand.self,
-            CompletionsCommand.self,
+            APICommand.self, DoctorCommand.self, InitCommand.self, MigrateCommand.self,
+            VersionCommand.self, CompletionsCommand.self,
         ],
         defaultSubcommand: nil
     )

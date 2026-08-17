@@ -61,15 +61,17 @@ public struct MetadataCommand: AsyncParsableCommand {
             abstract: "Write App Store metadata to local fastlane files.")
         @Option(name: .long, help: "App ID.") var appId: String
         @Option(name: .long, help: "Version string (e.g. 2.1.0).") var version: String
-        @Option(name: .long, help: "Metadata directory.") var path: String = "./metadata"
+        @Option(name: .long, help: "Metadata directory (default: paths.metadata from config, else ./metadata).")
+        var path: String?
         @Flag(name: .long, help: "Preview without writing files.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            let (client, _) = try globals.apiClient()
+            let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             try await Self.execute(
-                client: client, output: output, appId: appId, version: version, path: path,
+                client: client, output: output, appId: appId, version: version,
+                path: path ?? config.metadataPath ?? "./metadata",
                 dryRun: dryRun)
         }
 
@@ -117,15 +119,17 @@ public struct MetadataCommand: AsyncParsableCommand {
             abstract: "Push local fastlane metadata files to App Store Connect.")
         @Option(name: .long, help: "App ID.") var appId: String
         @Option(name: .long, help: "Version string (e.g. 2.1.0).") var version: String
-        @Option(name: .long, help: "Metadata directory.") var path: String = "./metadata"
+        @Option(name: .long, help: "Metadata directory (default: paths.metadata from config, else ./metadata).")
+        var path: String?
         @Flag(name: .long, help: "Preview without changes.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            let (client, _) = try globals.apiClient()
+            let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             _ = try await Self.execute(
-                client: client, output: output, appId: appId, version: version, path: path,
+                client: client, output: output, appId: appId, version: version,
+                path: path ?? config.metadataPath ?? "./metadata",
                 dryRun: dryRun)
         }
 

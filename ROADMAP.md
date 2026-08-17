@@ -45,6 +45,16 @@ Embed:
 ![Demo](assets/demo.gif)
 ```
 
+## Signing repair
+
+`appctl signing repair`: diagnose and repair code-signing state — expired or
+revoked certificates, missing or mismatched provisioning profiles — via the
+Certificates/Profiles endpoints. This is the appctl answer to the gap
+`appctl migrate --from-fastlane` reports for fastlane's `match`: not a
+git-synced certificate store, but making the signing assets an account already
+has valid and consistent. Until it lands, `appctl certificates list` shows
+what exists.
+
 ## Per-territory price tiers
 
 `appctl pricing info` currently shows territory-availability flags only

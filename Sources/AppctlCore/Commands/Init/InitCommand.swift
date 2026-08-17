@@ -47,7 +47,7 @@ public struct InitCommand: AsyncParsableCommand {
                     expected: "--merge to keep keys this run does not set, or --force to overwrite "
                         + "(either way the previous file is backed up to \(configPath).bak)")
             }
-            switch promptExistingChoice() {
+            switch ConfigWriter.promptExistingChoice(configPath: configPath) {
             case .abort: throw AppctlError.operationCancelled
             case .merge: mergeMode = true
             case .overwrite: mergeMode = false
@@ -104,7 +104,7 @@ public struct InitCommand: AsyncParsableCommand {
         let values = Self.fileValues(
             existing: existing, keyID: keyID, issuerID: issuerID, keyPath: keyPath,
             bundleID: discovered.bundleID?.value, useKeychain: useKeychain)
-        let rendered = Self.renderTOML(values)
+        let rendered = ConfigWriter.renderTOML(values)
         let store = KeychainCredentialStore()
 
         if dryRun {
@@ -124,7 +124,7 @@ public struct InitCommand: AsyncParsableCommand {
             try store.store(pem, account: .privateKey)
             output.success("Credentials stored in your login keychain (service \"\(store.service)\").")
         }
-        let backup = try Self.writeConfig(rendered, to: configPath, output: output)
+        let backup = try ConfigWriter.writeConfig(rendered, to: configPath, output: output)
         if let backup {
             output.info(
                 "Previous config backed up to \(backup) (comments are not carried into the rewritten file).")
@@ -277,50 +277,6 @@ public struct InitCommand: AsyncParsableCommand {
         return values
     }
 
-    /// Renders a flat `section.key` map as sectioned TOML, deterministically:
-    /// known sections in canonical order, other sections alphabetically after,
-    /// keys alphabetical within each section.
-    static func renderTOML(_ values: [String: String]) -> String {
-        let canonical = ["auth", "app", "output", "network"]
-        var sections: [String: [(key: String, value: String)]] = [:]
-        var topLevel: [(key: String, value: String)] = []
-        for (fullKey, value) in values {
-            if let dot = fullKey.firstIndex(of: ".") {
-                let section = String(fullKey[..<dot])
-                let key = String(fullKey[fullKey.index(after: dot)...])
-                sections[section, default: []].append((key, value))
-            } else {
-                topLevel.append((fullKey, value))
-            }
-        }
-        var lines = ["# appctl configuration"]
-        for (key, value) in topLevel.sorted(by: { $0.key < $1.key }) {
-            lines.append("\(key) = \(tomlLiteral(value))")
-        }
-        let order =
-            canonical.filter { sections[$0] != nil }
-            + sections.keys.filter { !canonical.contains($0) }.sorted()
-        for section in order {
-            lines.append("")
-            lines.append("[\(section)]")
-            for (key, value) in (sections[section] ?? []).sorted(by: { $0.key < $1.key }) {
-                lines.append("\(key) = \(tomlLiteral(value))")
-            }
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func tomlLiteral(_ value: String) -> String {
-        if value == "true" || value == "false" || Int(value) != nil || Double(value) != nil {
-            return value
-        }
-        let escaped =
-            value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
-    }
-
     /// Dry-run preview. Everything — including the rendered TOML — goes to the
     /// stderr stream, never stdout: in JSON mode stdout already carries the
     /// validation envelope and must remain a single valid JSON document.
@@ -335,35 +291,6 @@ public struct InitCommand: AsyncParsableCommand {
             output.info(
                 "Dry run: would store credentials in your login keychain (service \"\(keychainService)\").")
         }
-    }
-
-    /// Writes the rendered config with 0600 permissions, backing up any existing
-    /// file to `<path>.bak` first (overwritten each run). Returns the backup path
-    /// when one was written.
-    static func writeConfig(_ content: String, to path: String, output: OutputFormatter) throws -> String? {
-        let fm = FileManager.default
-        var backupPath: String?
-        if fm.fileExists(atPath: path) {
-            let bak = path + ".bak"
-            if fm.fileExists(atPath: bak) { try fm.removeItem(atPath: bak) }
-            try fm.copyItem(atPath: path, toPath: bak)
-            backupPath = bak
-        }
-        do {
-            try content.write(toFile: path, atomically: true, encoding: .utf8)
-        } catch {
-            throw AppctlError.fileWriteError(path: path, reason: error.localizedDescription)
-        }
-        // Restrict to owner read/write — the file references the path to a private key.
-        do {
-            try fm.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: path)
-        } catch {
-            output.warning(
-                "Saved \(path) but could not set 0600 permissions (\(error.localizedDescription)). "
-                    + "Consider running: chmod 600 \(path)")
-        }
-        return backupPath
     }
 
     // MARK: - Prompting
@@ -397,20 +324,6 @@ public struct InitCommand: AsyncParsableCommand {
             return try promptRequired(label, attempts: attempts + 1)
         }
         return input
-    }
-
-    private enum ExistingFileChoice { case merge, overwrite, abort }
-
-    private func promptExistingChoice() -> ExistingFileChoice {
-        var err = StandardError.shared
-        print(
-            "  .appctl.toml already exists. [m]erge / [o]verwrite / [a]bort (default: merge): ",
-            terminator: "", to: &err)
-        switch readLine()?.trimmingCharacters(in: .whitespaces).lowercased() {
-        case "o", "overwrite": return .overwrite
-        case "a", "abort", "q": return .abort
-        default: return .merge
-        }
     }
 
     private func promptYesNo(_ question: String) -> Bool {

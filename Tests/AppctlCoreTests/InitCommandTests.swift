@@ -110,15 +110,15 @@ import Testing
             "output.verbose": "false",
             "network.timeout": "30",
         ]
-        #expect(ConfigLoader.parseTOML(InitCommand.renderTOML(values)) == values)
+        #expect(ConfigLoader.parseTOML(ConfigWriter.renderTOML(values)) == values)
     }
 
     @Test func renderOrdersKnownSectionsCanonically() throws {
-        let rendered = InitCommand.renderTOML(["network.timeout": "30", "auth.key_id": "A"])
+        let rendered = ConfigWriter.renderTOML(["network.timeout": "30", "auth.key_id": "A"])
         let auth = try #require(rendered.range(of: "[auth]"))
         let network = try #require(rendered.range(of: "[network]"))
         #expect(auth.lowerBound < network.lowerBound)
-        #expect(rendered == InitCommand.renderTOML(["auth.key_id": "A", "network.timeout": "30"]))
+        #expect(rendered == ConfigWriter.renderTOML(["auth.key_id": "A", "network.timeout": "30"]))
     }
 
     // MARK: Live validation
@@ -188,7 +188,7 @@ import Testing
         try "# hand written\n[auth]\nkey_id = \"OLD\"\n".write(
             toFile: path, atomically: true, encoding: .utf8)
 
-        let backup = try InitCommand.writeConfig("[auth]\nkey_id = \"NEW\"\n", to: path, output: quiet)
+        let backup = try ConfigWriter.writeConfig("[auth]\nkey_id = \"NEW\"\n", to: path, output: quiet)
 
         #expect(backup == path + ".bak")
         #expect(try String(contentsOfFile: path + ".bak", encoding: .utf8).contains("OLD"))
@@ -204,7 +204,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: dir) }
         let path = dir.appendingPathComponent(".appctl.toml").path
 
-        let backup = try InitCommand.writeConfig("[auth]\nkey_id = \"NEW\"\n", to: path, output: quiet)
+        let backup = try ConfigWriter.writeConfig("[auth]\nkey_id = \"NEW\"\n", to: path, output: quiet)
 
         #expect(backup == nil)
         #expect(!FileManager.default.fileExists(atPath: path + ".bak"))

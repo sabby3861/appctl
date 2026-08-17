@@ -1,0 +1,57 @@
+name: "Setup appctl"
+description: "Install the appctl CLI on a macOS runner, pinned to a known version and verified against its SHA-256 checksum"
+
+# The pinned defaults below are updated automatically by the pin-action job in
+# .github/workflows/release.yml on each tagged release. The sha256 is embedded
+# here (not fetched from the release) so a compromised or corrupted release
+# asset cannot pass verification for the pinned version.
+#
+# Pins land on main AFTER each tag is cut, so a tag ref (uses: ...@v0.1.0)
+# carries the previous release's pins. Reference this action with @main, or
+# pass version + sha256 explicitly when pinning to a ref.
+inputs:
+  version:
+    description: "appctl version to install, without the v prefix. When overriding, also supply sha256."
+    required: false
+    default: "0.1.0" # appctl-pin-version
+  sha256:
+    description: "Expected SHA-256 of appctl-<version>-macos-universal.tar.gz. Required when version is overridden."
+    required: false
+    default: "UNRELEASED" # appctl-pin-sha256
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install appctl
+      shell: bash
+      env:
+        PINNED_VERSION: "0.1.0" # appctl-pin-version
+        PINNED_SHA256: "UNRELEASED" # appctl-pin-sha256
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS" != "macOS" ]]; then
+          echo "::error::appctl release binaries are macOS-only; this action requires a macOS runner."
+          exit 1
+        fi
+        if [[ "$SHA256" == "UNRELEASED" ]]; then
+          echo "::error::No release has pinned this action yet. Pass both version and sha256 inputs explicitly."
+          exit 1
+        fi
+        if [[ "$VERSION" != "$PINNED_VERSION" && "$SHA256" == "$PINNED_SHA256" ]]; then
+          echo "::error::version was overridden to ${VERSION} but sha256 still holds the pinned default for ${PINNED_VERSION}. Supply the sha256 for ${VERSION} (see checksums.txt on its release)."
+          exit 1
+        fi
+
+        TARBALL="appctl-${VERSION}-macos-universal.tar.gz"
+        URL="https://github.com/sabby3861/appctl/releases/download/v${VERSION}/${TARBALL}"
+        DEST="$RUNNER_TEMP/appctl-install"
+        mkdir -p "$DEST"
+        cd "$DEST"
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 -O "$URL"
+        echo "${SHA256}  ${TARBALL}" | shasum -a 256 -c -
+        tar -xzf "$TARBALL"
+        chmod +x appctl
+        echo "$DEST" >> "$GITHUB_PATH"
+        ./appctl version --short

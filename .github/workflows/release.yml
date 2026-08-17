@@ -1,0 +1,302 @@
+name: Release
+
+# Required repository secrets:
+#   DEVELOPER_ID_APPLICATION_P12          base64-encoded .p12 of the "Developer ID Application" certificate
+#   DEVELOPER_ID_APPLICATION_P12_PASSWORD password for that .p12
+#   DEVELOPER_ID_INSTALLER_P12            base64-encoded .p12 of the "Developer ID Installer" certificate
+#   DEVELOPER_ID_INSTALLER_P12_PASSWORD   password for that .p12
+#   NOTARY_KEY_ID / NOTARY_ISSUER_ID      App Store Connect API key id + issuer id for notarytool
+#   NOTARY_P8                             contents of the ASC API .p8 private key
+#   TAP_GITHUB_TOKEN                      token with push access to sabby3861/homebrew-tap
+#
+# Why the release ships both a tar.gz and a .pkg:
+# Apple's stapler can attach notarization tickets only to app bundles, .dmg, and
+# .pkg — never to a bare Mach-O binary or a zip/tar.gz, and `spctl -a` rejects
+# non-bundle executables regardless of notarization. So the bare binary is
+# signed + notarized (ticket retrievable online; verified via codesign -vv and
+# the notary log), while the .pkg is the artifact that can be stapled and
+# assessed offline with `spctl -a -vv -t install`. Homebrew and install.sh use
+# the tar.gz; the .pkg exists to carry the stapled ticket for quarantined
+# (browser) downloads. Do not re-litigate stapling the bare binary.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+      tarball_sha256: ${{ steps.package.outputs.tarball_sha256 }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # macos-15 defaults to Xcode 16.4 (Swift 6.1); the package requires
+      # swift-tools-version 6.2, so pin Xcode 26.3 which ships Swift 6.2.
+      - run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Verify tag matches AppctlVersion.current
+        id: guard
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_VERSION="$(sed -n 's/.*public static let current = "\([^"]*\)".*/\1/p' \
+            Sources/AppctlCore/Commands/Version/VersionCommand.swift)"
+          if [[ "$TAG_VERSION" != "$SOURCE_VERSION" ]]; then
+            echo "::error::Version mismatch: tag v${TAG_VERSION} vs AppctlVersion ${SOURCE_VERSION}. Bump AppctlVersion.current in Sources/AppctlCore/Commands/Version/VersionCommand.swift to ${TAG_VERSION} (or retag), then push the tag again."
+            exit 1
+          fi
+          echo "version=${TAG_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - run: swift test --parallel
+
+      - name: Build universal binary
+        run: |
+          set -euo pipefail
+          swift build -c release --arch arm64 --arch x86_64
+          BIN=.build/apple/Products/Release/appctl
+          lipo -info "$BIN" | tee /dev/stderr | grep -q x86_64
+          lipo -info "$BIN" | grep -q arm64
+
+      - name: Generate man page
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/man"
+          # The tool name is auto-discovered; passing it explicitly breaks this
+          # plugin version ("Unexpected argument").
+          swift package --allow-writing-to-directory "$RUNNER_TEMP/man" \
+            plugin generate-manual --output-directory "$RUNNER_TEMP/man"
+          test -s "$RUNNER_TEMP/man/appctl.1"
+
+      - name: Import signing certificates into a temporary keychain
+        env:
+          APP_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_P12 }}
+          APP_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          INSTALLER_P12: ${{ secrets.DEVELOPER_ID_INSTALLER_P12 }}
+          INSTALLER_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_INSTALLER_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo -n "$APP_P12" | base64 --decode > "$RUNNER_TEMP/app.p12"
+          security import "$RUNNER_TEMP/app.p12" -k "$KEYCHAIN_PATH" \
+            -P "$APP_P12_PASSWORD" -T /usr/bin/codesign
+          echo -n "$INSTALLER_P12" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/installer.p12" -k "$KEYCHAIN_PATH" \
+            -P "$INSTALLER_P12_PASSWORD" -T /usr/bin/pkgbuild -T /usr/bin/productsign
+          rm -f "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
+
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          APP_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          if [[ -z "$APP_IDENTITY" ]]; then
+            echo "::error::No 'Developer ID Application' identity found in DEVELOPER_ID_APPLICATION_P12 — the binary cannot be signed."
+            exit 1
+          fi
+          # pkgs must be signed with a Developer ID *Installer* certificate — a
+          # different certificate type than Developer ID Application. Fail here
+          # rather than sign the pkg with the wrong type.
+          INSTALLER_IDENTITY="$(security find-identity -v "$KEYCHAIN_PATH" \
+            | sed -n 's/.*"\(Developer ID Installer: [^"]*\)".*/\1/p' | head -1)"
+          if [[ -z "$INSTALLER_IDENTITY" ]]; then
+            echo "::error::No 'Developer ID Installer' identity found in DEVELOPER_ID_INSTALLER_P12. Generate one at https://developer.apple.com/account/resources/certificates (type: Developer ID Installer), export as .p12, and set the secret. The Application certificate cannot sign pkgs."
+            exit 1
+          fi
+          echo "APP_IDENTITY=$APP_IDENTITY" >> "$GITHUB_ENV"
+          echo "INSTALLER_IDENTITY=$INSTALLER_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Codesign binary
+        run: |
+          set -euo pipefail
+          BIN=.build/apple/Products/Release/appctl
+          codesign --force --options runtime --timestamp --sign "$APP_IDENTITY" "$BIN"
+          codesign --verify --strict -vv "$BIN"
+
+      - name: Notarize binary
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_P8: ${{ secrets.NOTARY_P8 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NOTARY_P8" > "$RUNNER_TEMP/notary.p8"
+          # notarytool accepts zip/pkg/dmg only, so the bare binary is submitted
+          # zipped; the signature (and the ticket, online) travel with the
+          # Mach-O inside the tar.gz built later.
+          ditto -c -k .build/apple/Products/Release/appctl "$RUNNER_TEMP/appctl.zip"
+          RESULT="$(xcrun notarytool submit "$RUNNER_TEMP/appctl.zip" \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --wait --output-format json)"
+          echo "$RESULT"
+          STATUS="$(echo "$RESULT" | jq -r .status)"
+          if [[ "$STATUS" != "Accepted" ]]; then
+            xcrun notarytool log "$(echo "$RESULT" | jq -r .id)" \
+              --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID"
+            echo "::error::Binary notarization ${STATUS}"
+            exit 1
+          fi
+
+      - name: Build, sign, notarize, and staple pkg
+        env:
+          VERSION: ${{ steps.guard.outputs.version }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          PKGROOT="$RUNNER_TEMP/pkgroot"
+          mkdir -p "$PKGROOT/bin" "$PKGROOT/share/man/man1"
+          install -m 755 .build/apple/Products/Release/appctl "$PKGROOT/bin/appctl"
+          install -m 644 "$RUNNER_TEMP/man/appctl.1" "$PKGROOT/share/man/man1/appctl.1"
+          PKG="appctl-${VERSION}.pkg"
+          pkgbuild --root "$PKGROOT" \
+            --identifier io.github.sabby3861.appctl \
+            --version "$VERSION" \
+            --install-location /usr/local \
+            --sign "$INSTALLER_IDENTITY" \
+            "$PKG"
+
+          RESULT="$(xcrun notarytool submit "$PKG" \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --wait --output-format json)"
+          echo "$RESULT"
+          STATUS="$(echo "$RESULT" | jq -r .status)"
+          if [[ "$STATUS" != "Accepted" ]]; then
+            xcrun notarytool log "$(echo "$RESULT" | jq -r .id)" \
+              --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID"
+            echo "::error::pkg notarization ${STATUS}"
+            exit 1
+          fi
+
+          xcrun stapler staple "$PKG"
+          xcrun stapler validate "$PKG"
+          # Offline Gatekeeper assessment — the acceptance check for this release.
+          spctl -a -vv -t install "$PKG"
+
+      - name: Package tarball and checksums
+        id: package
+        env:
+          VERSION: ${{ steps.guard.outputs.version }}
+          # Keep AppleDouble (._*) files out of the tarball.
+          COPYFILE_DISABLE: "1"
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/stage"
+          mkdir -p "$STAGE"
+          install -m 755 .build/apple/Products/Release/appctl "$STAGE/appctl"
+          install -m 644 "$RUNNER_TEMP/man/appctl.1" "$STAGE/appctl.1"
+          install -m 644 LICENSE "$STAGE/LICENSE"
+          TARBALL="appctl-${VERSION}-macos-universal.tar.gz"
+          tar -czf "$TARBALL" -C "$STAGE" appctl appctl.1 LICENSE
+          shasum -a 256 "$TARBALL" "appctl-${VERSION}.pkg" > checksums.txt
+          cat checksums.txt
+          echo "tarball_sha256=$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "v${VERSION}" \
+            "appctl-${VERSION}-macos-universal.tar.gz" \
+            "appctl-${VERSION}.pkg" \
+            checksums.txt \
+            --verify-tag \
+            --title "appctl ${VERSION}" \
+            --generate-notes
+
+      - name: Remove temporary keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
+
+  bump-tap:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: sabby3861/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      # The formula is rendered in full each release rather than sed-patched, so
+      # this job is idempotent and also bootstraps a tap that has no formula yet.
+      - name: Render and push formula
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256: ${{ needs.release.outputs.tarball_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p Formula
+          cat > Formula/appctl.rb <<EOF
+          class Appctl < Formula
+            desc "Swift CLI for App Store Connect"
+            homepage "https://github.com/sabby3861/appctl"
+            url "https://github.com/sabby3861/appctl/releases/download/v${VERSION}/appctl-${VERSION}-macos-universal.tar.gz"
+            sha256 "${SHA256}"
+            license "MIT"
+
+            depends_on macos: :ventura
+
+            def install
+              bin.install "appctl"
+              man1.install "appctl.1"
+              generate_completions_from_executable(bin/"appctl", "--generate-completion-script")
+            end
+
+            test do
+              assert_match "${VERSION}", shell_output("#{bin}/appctl version --short")
+            end
+          end
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/appctl.rb
+          git diff --cached --quiet && { echo "Formula already up to date"; exit 0; }
+          git commit -m "appctl ${VERSION}"
+          git push
+
+  pin-action:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      # action.yml pins a default version + expected tarball sha256 so consumers
+      # get checksum verification without trusting the release endpoint; this
+      # keeps those pins current. Requires main to accept pushes from
+      # GITHUB_TOKEN (adjust branch protection if this step is rejected).
+      - name: Update action.yml pins
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256: ${{ needs.release.outputs.tarball_sha256 }}
+        run: |
+          set -euo pipefail
+          # Each marker appears twice in action.yml (input default + env pin);
+          # sed rewrites every marked line.
+          sed -i -E "s|\"[^\"]*\"( # appctl-pin-version)$|\"${VERSION}\"\1|" action.yml
+          sed -i -E "s|\"[^\"]*\"( # appctl-pin-sha256)$|\"${SHA256}\"\1|" action.yml
+          [[ "$(grep -c "\"${VERSION}\" # appctl-pin-version" action.yml)" == 2 ]]
+          [[ "$(grep -c "\"${SHA256}\" # appctl-pin-sha256" action.yml)" == 2 ]]
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add action.yml
+          git diff --cached --quiet && { echo "Pins already current"; exit 0; }
+          git commit -m "Pin action to appctl ${VERSION}"
+          git push origin HEAD:main

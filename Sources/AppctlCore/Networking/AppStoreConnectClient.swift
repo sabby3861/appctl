@@ -25,6 +25,21 @@ public protocol AppStoreConnectClient: Sendable {
     func logWarning(_ message: String) async
 }
 
+/// Minimal view of one page of a paginated JSON:API response, so the shared
+/// pagination engine (`getPages`) can drive both typed lists (`APIListResponse`)
+/// and the `api` command's schemaless raw documents through the same loop guards.
+public protocol PaginatedDocument: Decodable {
+    var pageItemCount: Int { get }
+    var nextLink: String? { get }
+    var pagingTotal: Int? { get }
+}
+
+extension APIListResponse: PaginatedDocument {
+    public var pageItemCount: Int { data.count }
+    public var nextLink: String? { links?.next }
+    public var pagingTotal: Int? { meta?.paging?.total }
+}
+
 extension AppStoreConnectClient {
     public func logDebug(_ message: String) async {}
 
@@ -37,79 +52,92 @@ extension AppStoreConnectClient {
         try await get(path, queryItems: nil)
     }
 
-    /// Fetches a JSON:API collection, following `links.next` until the requested
-    /// number of items is accumulated or pages are exhausted.
+    /// The pagination engine: fetches a JSON:API collection page by page, following
+    /// `links.next` until the requested number of items is accumulated or pages are
+    /// exhausted, and returns every page for the caller to merge.
     ///
     /// Lives here rather than on `APIClient` so every conformer — including the test
     /// mock and the offline fixture client — runs the same pagination logic.
     ///
     /// - Parameters:
-    ///   - limit: Maximum total items to return; `nil` fetches every page.
+    ///   - limit: Maximum total items to accumulate; `nil` fetches every page.
     ///   - pageSize: Per-page `limit` query parameter, clamped to the ASC maximum of 200.
-    public func getList<T: Decodable>(
+    public func getPages<P: PaginatedDocument>(
         _ path: String, queryItems: [URLQueryItem]? = nil,
         limit: Int? = nil, pageSize: Int = 200
-    ) async throws -> APIListResponse<T> {
+    ) async throws -> [P] {
         let perPage = max(1, min(pageSize, 200, limit ?? 200))
         var firstPageQuery = (queryItems ?? []).filter { $0.name != "limit" }
         firstPageQuery.append(URLQueryItem(name: "limit", value: String(perPage)))
 
-        var page: APIListResponse<T> = try await get(path, queryItems: firstPageQuery)
-        var data = page.data
-        var included = page.included ?? []
-        var meta = page.meta
-        var pages = 1
+        var page: P = try await get(path, queryItems: firstPageQuery)
+        var pages = [page]
+        var itemCount = page.pageItemCount
         var lastFetchedURL: String?
-        await logDebug(Self.pageSummary(path: path, page: 1, pageData: page, runningTotal: data.count))
+        await logDebug(Self.pageSummary(path: path, page: 1, pageDoc: page, runningTotal: itemCount))
 
-        while let next = page.links?.next {
-            if let limit, data.count >= limit { break }
+        while let next = page.nextLink {
+            if let limit, itemCount >= limit { break }
             // Documented ASC bug: some endpoints return an empty page that still
             // carries a next link; following it would spin forever.
-            if page.data.isEmpty {
+            if page.pageItemCount == 0 {
                 await logDebug("getList \(path): empty page with a next link (known ASC bug); stopping.")
                 break
             }
             if next == lastFetchedURL {
                 await logWarning(
                     "Pagination stopped: \(path) repeated its own next link (known ASC bug). "
-                        + "Results may be incomplete (\(data.count) items).")
+                        + "Results may be incomplete (\(itemCount) items).")
                 break
             }
-            if pages >= paginationPageCap {
+            if pages.count >= paginationPageCap {
                 await logWarning(
                     "Pagination stopped at the \(paginationPageCap)-page safety cap for \(path) "
-                        + "(\(data.count) items). Results may be incomplete; narrow the query with filters.")
+                        + "(\(itemCount) items). Results may be incomplete; narrow the query with filters.")
                 break
             }
             lastFetchedURL = next
             page = try await get(next)
-            pages += 1
-            data.append(contentsOf: page.data)
-            if let pageIncluded = page.included { included.append(contentsOf: pageIncluded) }
-            if let pageMeta = page.meta { meta = pageMeta }
-            await logDebug(Self.pageSummary(path: path, page: pages, pageData: page, runningTotal: data.count))
+            pages.append(page)
+            itemCount += page.pageItemCount
+            await logDebug(
+                Self.pageSummary(path: path, page: pages.count, pageDoc: page, runningTotal: itemCount))
         }
 
-        if let limit, data.count > limit { data = Array(data.prefix(limit)) }
-        if pages >= 3 {
+        if pages.count >= 3 {
             // Straight to stderr rather than through `OutputFormatter` (like the
             // legacy-submit deprecation warning) so it stays visible in `--format json`
             // mode without contaminating stdout.
             var stderr = StandardError.shared
+            let shown = limit.map { min($0, itemCount) } ?? itemCount
             let hint = limit == nil ? "; use --limit to cap" : ""
-            print("Fetched \(data.count) items across \(pages) pages\(hint).", to: &stderr)
+            print("Fetched \(shown) items across \(pages.count) pages\(hint).", to: &stderr)
         }
-        return APIListResponse(
-            data: data, included: included.isEmpty ? nil : included,
-            links: nil, meta: meta, pagesFetched: pages)
+        return pages
     }
 
-    private static func pageSummary<T>(
-        path: String, page: Int, pageData: APIListResponse<T>, runningTotal: Int
+    /// Fetches a JSON:API collection via `getPages` and merges the pages into a
+    /// single aggregated response.
+    public func getList<T: Decodable>(
+        _ path: String, queryItems: [URLQueryItem]? = nil,
+        limit: Int? = nil, pageSize: Int = 200
+    ) async throws -> APIListResponse<T> {
+        let pages: [APIListResponse<T>] = try await getPages(
+            path, queryItems: queryItems, limit: limit, pageSize: pageSize)
+        var data = pages.flatMap(\.data)
+        if let limit, data.count > limit { data = Array(data.prefix(limit)) }
+        let included = pages.compactMap(\.included).flatMap { $0 }
+        return APIListResponse(
+            data: data, included: included.isEmpty ? nil : included,
+            links: nil, meta: pages.reversed().compactMap(\.meta).first,
+            pagesFetched: pages.count)
+    }
+
+    private static func pageSummary<P: PaginatedDocument>(
+        path: String, page: Int, pageDoc: P, runningTotal: Int
     ) -> String {
-        let total = pageData.meta?.paging?.total.map(String.init) ?? "unknown"
-        return "getList \(path): page \(page) — \(pageData.data.count) item(s), "
+        let total = pageDoc.pagingTotal.map(String.init) ?? "unknown"
+        return "getList \(path): page \(page) — \(pageDoc.pageItemCount) item(s), "
             + "running total \(runningTotal), meta.paging.total: \(total)"
     }
 }

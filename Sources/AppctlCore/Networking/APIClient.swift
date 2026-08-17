@@ -148,6 +148,9 @@ public final class APIClient: @unchecked Sendable {
                 if (200...299).contains(http.statusCode) {
                     if data.isEmpty || http.statusCode == 204 {
                         if let empty = EmptyResponse() as? T { return empty }
+                        // Schemaless callers (the `api` command) decode into JSONValue,
+                        // where a successful 204 is simply "no document".
+                        if let null = JSONValue.null as? T { return null }
                         throw AppctlError.invalidResponse(
                             url: request.url?.absoluteString ?? "",
                             reason: "Expected response body but received empty \(http.statusCode).")

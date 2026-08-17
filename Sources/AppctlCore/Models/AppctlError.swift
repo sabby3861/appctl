@@ -38,6 +38,8 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
     case buildProcessingFailed(state: String, details: [String])
     case uploadPartFailed(partNumber: Int64, attempts: Int, reason: String)
     case screenshotValidationFailed(failures: [String])
+    case confirmationRequired(operation: String)
+    case schemaUnavailable(reason: String)
 
     public var description: String { diagnosticMessage }
     public var errorDescription: String? { diagnosticMessage }
@@ -151,6 +153,12 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
                 .map { "    \($0)" }.joined(separator: "\n")
             return
                 "✗ Screenshot Validation Failed\n\(failureLines)\n  Accepted sizes:\n\(accepted)\n  Fix: Resize or re-export the files above, then re-run. Nothing was uploaded."
+        case .confirmationRequired(let operation):
+            return
+                "✗ Confirmation Required\n  \(operation) is destructive and cannot be undone.\n  Fix: Re-run the same command with --confirm to proceed."
+        case .schemaUnavailable(let reason):
+            return
+                "✗ API Schema Unavailable\n  \(reason)\n  Fix: Check your network connection and retry, or refresh the cached copy with `appctl api --update-schema`."
         }
     }
 

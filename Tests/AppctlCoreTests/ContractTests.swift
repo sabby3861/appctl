@@ -118,6 +118,15 @@ import Testing
         #expect(error.errorCode.exitClass == 4)
     }
 
+    /// The exact phrase is the point: it is the documented remedy for the
+    /// 403-everywhere agreements trap and must reach the user verbatim.
+    @Test func agreementPendingFixLineIsPinnedVerbatim() {
+        let message = AppctlError.agreementPending(detail: "x").diagnosticMessage
+        #expect(
+            message.contains(
+                "Fix: the Account Holder may need to accept updated agreements in App Store Connect"))
+    }
+
     @Test func diagnosticMessageCarriesTheCodeLine() {
         let message = AppctlError.missingAPIKey(detail: "x").diagnosticMessage
         #expect(message.contains("Code: AUTH_MISSING_KEY"))

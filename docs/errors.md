@@ -40,8 +40,10 @@ The key authenticated but lacks the role for this endpoint. Check the key's
 role in App Store Connect.
 
 ## AUTH_AGREEMENT_PENDING
-A developer program agreement is unsigned, which blocks most API writes. An
-Account Holder must accept it in App Store Connect; no API call can fix this.
+A developer program agreement is unsigned. This can make every endpoint return
+403 — often without mentioning the agreement — even though the token is valid.
+The Account Holder may need to accept updated agreements in App Store Connect
+(Business, or Agreements, Tax, and Banking); no API call can fix this.
 
 ## AUTH_KEYCHAIN
 Reading or writing the login keychain failed. Unlock the keychain and retry;

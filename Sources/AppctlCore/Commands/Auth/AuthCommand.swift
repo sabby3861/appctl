@@ -304,4 +304,14 @@ struct GlobalOptions: ParsableArguments {
             APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: effectiveTimeout), config
         )
     }
+
+    /// Builds a client from candidate credentials that are not persisted anywhere
+    /// yet (`init` validates before writing config), keeping concrete client
+    /// construction inside the composition root.
+    func apiClient(candidate config: AppctlConfig) throws -> any AppStoreConnectClient {
+        if mock { return FixtureClient() }
+        let gen = try AuthStore.createGenerator(from: config)
+        return APIClient(
+            jwtGenerator: gen, verbose: config.verbose, timeout: timeout ?? config.timeout)
+    }
 }

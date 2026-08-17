@@ -65,7 +65,7 @@ public enum AppctlError: LocalizedError, CustomStringConvertible {
                 "✗ Missing API Key\n  \(detail)\n  Fix: Run `appctl auth setup` or set APPCTL_KEY_ID, APPCTL_ISSUER_ID, and APPCTL_PRIVATE_KEY_PATH environment variables."
         case .agreementPending(let detail):
             return
-                "✗ Developer Agreement Pending\n  \(detail)\n  Fix: An Account Holder must accept the latest agreement in App Store Connect → Business (or Agreements, Tax, and Banking), then retry."
+                "✗ Developer Agreement Pending\n  \(detail)\n  Fix: the Account Holder may need to accept updated agreements in App Store Connect (Business, or Agreements, Tax, and Banking), then retry."
         case .invalidKeyFile(let path, let reason):
             return
                 "✗ Invalid API Key File\n  Path: \(path)\n  Reason: \(reason)\n  Fix: Download a fresh .p8 key file from App Store Connect → Users and Access → Keys."

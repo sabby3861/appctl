@@ -41,10 +41,26 @@ import Testing
         await mock.queue(Self.build123456)
         await mock.queue(Self.createdVersion)
 
-        try await WorkflowCommand.Release.execute(
+        let outcome = try await WorkflowCommand.Release.execute(
             client: mock, output: Self.quietOutput(), appId: "app-1", version: "2.0",
             buildId: "123456", platform: "IOS", releaseType: "AFTER_APPROVAL",
-            phased: false, dryRun: false, skipSubmit: true, legacySubmit: false)
+            phased: false, dryRun: false, skipSubmit: true, legacySubmit: false,
+            nextActions: NextActions(propagatedFlags: []))
+
+        let data = try #require(outcome).data
+        #expect(
+            data
+                == .object([
+                    "app_id": .string("app-1"),
+                    "version": .string("2.0"),
+                    "version_id": .string("ver-1"),
+                    "build_id": .string("123456"),
+                    "build_version": .string("1.2.3"),
+                    "submitted": .bool(false),
+                ]))
+        #expect(
+            outcome?.next == ["submit": "appctl versions submit ver-1"],
+            "--skip-submit leaves submission as the obvious next step")
 
         let requests = await mock.requests
         let validation = try #require(requests.first)
@@ -65,10 +81,11 @@ import Testing
         await mock.failNext("GET", "builds/999999", withErrorBody: Self.notFoundBody)
 
         do {
-            try await WorkflowCommand.Release.execute(
+            _ = try await WorkflowCommand.Release.execute(
                 client: mock, output: Self.quietOutput(), appId: "app-1", version: "2.0",
                 buildId: "999999", platform: "IOS", releaseType: "AFTER_APPROVAL",
-                phased: false, dryRun: false, skipSubmit: true, legacySubmit: false)
+                phased: false, dryRun: false, skipSubmit: true, legacySubmit: false,
+                nextActions: NextActions(propagatedFlags: []))
             Issue.record("A nonexistent --build-id must throw before the pipeline starts")
         } catch let error as AppctlError {
             guard case .resourceNotFound(let type, let identifier) = error else {
@@ -93,15 +110,48 @@ import Testing
         let mock = MockAppStoreConnectClient()
         await mock.queue(Self.build123456)
 
-        try await WorkflowCommand.Release.execute(
+        let outcome = try await WorkflowCommand.Release.execute(
             client: mock, output: Self.quietOutput(), appId: "app-1", version: "2.0",
             buildId: "123456", platform: "IOS", releaseType: "AFTER_APPROVAL",
-            phased: false, dryRun: true, skipSubmit: false, legacySubmit: false)
+            phased: false, dryRun: true, skipSubmit: false, legacySubmit: false,
+            nextActions: NextActions(propagatedFlags: []))
 
+        #expect(outcome == nil, "--dry-run produces no success envelope")
         let requests = await mock.requests
         try #require(requests.count == 1, "dry run must validate the id and do nothing else")
         #expect(requests[0].method == "GET")
         #expect(requests[0].path == "builds/123456")
+    }
+
+    @Test func submittedReleaseOffersRejectAsNext() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.build123456)
+        await mock.queue(Self.createdVersion)
+        await mock.queue(#"{"data":[]}"#)
+        await mock.queue(
+            #"{"data":{"type":"reviewSubmissions","id":"sub-1","attributes":{"state":"READY_FOR_REVIEW"}}}"#)
+        await mock.queue(#"{"data":{"type":"reviewSubmissionItems","id":"item-1"}}"#)
+        await mock.queue(
+            #"{"data":{"type":"reviewSubmissions","id":"sub-1","attributes":{"state":"WAITING_FOR_REVIEW"}}}"#)
+
+        let outcome = try await WorkflowCommand.Release.execute(
+            client: mock, output: Self.quietOutput(), appId: "app-1", version: "2.0",
+            buildId: "123456", platform: "IOS", releaseType: "AFTER_APPROVAL",
+            phased: false, dryRun: false, skipSubmit: false, legacySubmit: false,
+            nextActions: NextActions(propagatedFlags: []))
+
+        let data = try #require(outcome).data
+        #expect(
+            data
+                == .object([
+                    "app_id": .string("app-1"),
+                    "version": .string("2.0"),
+                    "version_id": .string("ver-1"),
+                    "build_id": .string("123456"),
+                    "build_version": .string("1.2.3"),
+                    "submitted": .bool(true),
+                ]))
+        #expect(outcome?.next == ["reject": "appctl versions reject ver-1"])
     }
 
     @Test func non404ErrorsDuringValidationSurfaceVerbatim() async throws {
@@ -125,5 +175,98 @@ import Testing
         } catch {
             Issue.record("Expected AppctlError, got \(error)")
         }
+    }
+}
+
+@Suite("Workflow publish") struct WorkflowPublishTests {
+    private static let declaredBuild = """
+        {"data":[{"type":"builds","id":"build-1","attributes":{"version":"7","processingState":"VALID",\
+        "expired":false,"usesNonExemptEncryption":false}}]}
+        """
+    private static let undeclaredBuild = """
+        {"data":[{"type":"builds","id":"build-1","attributes":{"version":"7","processingState":"VALID",\
+        "expired":false}}]}
+        """
+    private static let patchedBuild = """
+        {"data":{"type":"builds","id":"build-1","attributes":{"version":"7","processingState":"VALID",\
+        "expired":false,"usesNonExemptEncryption":false}}}
+        """
+    private static let groups = """
+        {"data":[{"type":"betaGroups","id":"group-ext","attributes":{"name":"Beta","isInternalGroup":false}},\
+        {"type":"betaGroups","id":"group-int","attributes":{"name":"Team","isInternalGroup":true}}]}
+        """
+
+    private static func quietOutput() -> OutputFormatter {
+        OutputFormatter(format: .json, noColor: true)
+    }
+
+    @Test func distributesLatestBuildToExplicitGroup() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.declaredBuild)
+
+        let outcome = try await WorkflowCommand.Publish.execute(
+            client: mock, output: Self.quietOutput(), appId: "app-1", groupId: "group-1",
+            internalGroup: false, externalGroup: false, dryRun: false)
+
+        let requests = await mock.requests
+        try #require(requests.count == 2)
+        #expect(requests[0].method == "GET")
+        #expect(requests[0].path == "builds")
+        #expect(
+            requests[0].queryItems?.contains(
+                URLQueryItem(name: "filter[processingState]", value: "VALID")) == true)
+        #expect(requests[1].method == "POST")
+        #expect(requests[1].path == "betaGroups/group-1/relationships/builds")
+
+        let data = try #require(outcome).data
+        #expect(
+            data
+                == .object([
+                    "app_id": .string("app-1"),
+                    "build_id": .string("build-1"),
+                    "build_version": .string("7"),
+                    "group_id": .string("group-1"),
+                ]))
+    }
+
+    @Test func autoSelectsInternalGroupAndDeclaresMissingCompliance() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.undeclaredBuild)
+        await mock.queue(Self.patchedBuild)
+        await mock.queue(Self.groups)
+
+        let outcome = try await WorkflowCommand.Publish.execute(
+            client: mock, output: Self.quietOutput(), appId: "app-1", groupId: nil,
+            internalGroup: true, externalGroup: false, dryRun: false)
+
+        let requests = await mock.requests
+        try #require(requests.count == 4)
+        #expect(requests.map(\.method) == ["GET", "PATCH", "GET", "POST"])
+        #expect(requests[1].path == "builds/build-1", "undeclared compliance is set to exempt first")
+        #expect(requests[2].path == "betaGroups")
+        #expect(requests[3].path == "betaGroups/group-int/relationships/builds")
+        #expect(
+            try #require(outcome).data
+                == .object([
+                    "app_id": .string("app-1"),
+                    "build_id": .string("build-1"),
+                    "build_version": .string("7"),
+                    "group_id": .string("group-int"),
+                ]))
+    }
+
+    @Test func dryRunFindsTargetsButDistributesNothing() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(Self.undeclaredBuild)
+
+        let outcome = try await WorkflowCommand.Publish.execute(
+            client: mock, output: Self.quietOutput(), appId: "app-1", groupId: "group-1",
+            internalGroup: false, externalGroup: false, dryRun: true)
+
+        let requests = await mock.requests
+        #expect(
+            requests.map(\.method) == ["GET"],
+            "--dry-run must not declare compliance or distribute")
+        #expect(outcome == nil)
     }
 }

@@ -15,13 +15,19 @@ public struct TestFlightCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, appId: appId ?? config.defaultAppID)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId: String?
+        ) async throws {
             let spinner = output.startSpinner("Fetching beta groups")
             var q: [URLQueryItem] = [
                 URLQueryItem(
                     name: "fields[betaGroups]",
                     value: "name,isInternalGroup,publicLinkEnabled,feedbackEnabled,createdDate")
             ]
-            if let a = appId ?? config.defaultAppID { q.append(URLQueryItem(name: "filter[app]", value: a)) }
+            if let a = appId { q.append(URLQueryItem(name: "filter[app]", value: a)) }
             do {
                 let r: APIListResponse<BetaGroup> = try await client.getList("betaGroups", queryItems: q)
                 spinner.stop()
@@ -50,12 +56,21 @@ public struct TestFlightCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            let (limit, pageSize) = try pagination.validated()
+            try await Self.execute(
+                client: client, output: output, appId: appId ?? config.defaultAppID,
+                email: email, limit: pagination.limit, pageSize: pagination.pageSize)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId: String?,
+            email: String?, limit: Int?, pageSize: Int
+        ) async throws {
+            try PaginationOptions.validate(limit: limit, pageSize: pageSize)
             let spinner = output.startSpinner("Fetching testers")
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "fields[betaTesters]", value: "firstName,lastName,email,inviteType,state")
             ]
-            if let a = appId ?? config.defaultAppID { q.append(URLQueryItem(name: "filter[apps]", value: a)) }
+            if let a = appId { q.append(URLQueryItem(name: "filter[apps]", value: a)) }
             if let e = email { q.append(URLQueryItem(name: "filter[email]", value: e)) }
             do {
                 let r: APIListResponse<BetaTester> = try await client.getList(
@@ -87,6 +102,15 @@ public struct TestFlightCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            let outcome = try await Self.execute(
+                client: client, output: output, buildId: buildId, groupId: groupId)
+            output.printMutation(outcome)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, buildId: String,
+            groupId: String
+        ) async throws -> MutationOutcome {
             let spinner = output.startSpinner("Distributing build")
             do {
                 try await client.postVoid(
@@ -94,6 +118,11 @@ public struct TestFlightCommand: AsyncParsableCommand {
                     body: BuildGroupAssignmentBody(data: [TypeIDRef(type: "builds", id: buildId)]))
                 spinner.stop()
                 output.success("Build \(buildId) added to group \(groupId)")
+                return MutationOutcome(
+                    data: .object([
+                        "build_id": .string(buildId),
+                        "group_id": .string(groupId),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error

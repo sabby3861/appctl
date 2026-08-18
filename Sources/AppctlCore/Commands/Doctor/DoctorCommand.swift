@@ -8,14 +8,20 @@ public struct DoctorCommand: AsyncParsableCommand {
     public init() {}
     public func run() async throws {
         let output = try globals.outputFormatter()
-        var s = StandardError.shared
-        print("\n  \(output.useColor ? "\u{001B}[1mappctl doctor\u{001B}[0m" : "appctl doctor")", to: &s)
-        print("  Checking your environment...\n", to: &s)
         let config = try ConfigLoader.load(
             keyIDOverride: globals.keyId, issuerIDOverride: globals.issuerId,
             privateKeyPathOverride: globals.privateKeyPath)
         // nil when auth isn't configured — diagnostics then skip the connectivity check.
         let client = (try? globals.apiClient(timeout: 10))?.0
+        try await Self.execute(client: client, output: output, config: config)
+    }
+
+    static func execute(
+        client: (any AppStoreConnectClient)?, output: OutputFormatter, config: AppctlConfig
+    ) async throws {
+        var s = StandardError.shared
+        print("\n  \(output.useColor ? "\u{001B}[1mappctl doctor\u{001B}[0m" : "appctl doctor")", to: &s)
+        print("  Checking your environment...\n", to: &s)
         let results = await EnvironmentDiagnostics.runAll(config: config, client: client)
         for result in results {
             let sym: String

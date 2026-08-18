@@ -15,6 +15,12 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, versionId: versionId)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching localizations")
             do {
                 let r: APIListResponse<VersionLocalization> = try await client.getList(
@@ -50,6 +56,12 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, localizationId: localizationId)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, localizationId: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching localization")
             do {
                 let r: APIResponse<VersionLocalization> = try await client.get(
@@ -81,6 +93,20 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, localizationId: localizationId,
+                appDescription: appDescription, keywords: keywords, whatsNew: whatsNew,
+                promotionalText: promotionalText, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, localizationId: String,
+            appDescription: String?, keywords: String?, whatsNew: String?,
+            promotionalText: String?, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             if let d = appDescription, d.count > 4000 {
                 throw AppctlError.invalidInput(field: "description", value: "\(d.count) chars", expected: "Max 4000")
             }
@@ -89,7 +115,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
             }
             if dryRun {
                 output.info("[DRY RUN] Would update localization \(localizationId)")
-                return
+                return nil
             }
             let spinner = output.startSpinner("Updating localization")
             let body = LocalizationUpdateRequest(
@@ -99,10 +125,22 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         description: appDescription, keywords: keywords, whatsNew: whatsNew,
                         promotionalText: promotionalText)))
             do {
-                let _: APIResponse<VersionLocalization> = try await client.patch(
+                let r: APIResponse<VersionLocalization> = try await client.patch(
                     "appStoreVersionLocalizations/\(localizationId)", body: body)
                 spinner.stop()
                 output.success("Localization updated")
+                let updatedFields = [
+                    appDescription != nil ? "description" : nil,
+                    keywords != nil ? "keywords" : nil,
+                    whatsNew != nil ? "whats_new" : nil,
+                    promotionalText != nil ? "promotional_text" : nil,
+                ].compactMap { $0 }
+                return MutationOutcome(
+                    data: .object([
+                        "id": .string(localizationId),
+                        "locale": r.data.attributes?.locale.map(JSONValue.string) ?? .null,
+                        "updated_fields": .array(updatedFields.map(JSONValue.string)),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error
@@ -122,6 +160,18 @@ public struct LocalizationsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, versionId: versionId, dir: dir,
+                direction: direction, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
+            dir: String, direction: String, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             guard ["pull", "push"].contains(direction) else {
                 throw AppctlError.invalidInput(field: "direction", value: direction, expected: "'pull' or 'push'")
             }
@@ -134,6 +184,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         value: "locale,description,keywords,whatsNew,promotionalText")
                 ])
             spinner.stop()
+            var locales: [String] = []
             if direction == "pull" {
                 for loc in r.data {
                     guard let locale = loc.attributes?.locale else { continue }
@@ -153,6 +204,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         try w.write(toFile: "\(locDir)/whats_new.txt", atomically: true, encoding: .utf8)
                     }
                     output.success("Saved \(locale)")
+                    locales.append(locale)
                 }
                 output.info("Metadata saved to \(dir)/ — track these in git.")
             } else {
@@ -189,6 +241,7 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                             body: body
                         )
                         output.success("Pushed \(locale)")
+                        locales.append(locale)
                     } catch {
                         // Keep pushing the remaining locales; the aggregate failure
                         // below makes the partial result exit non-zero.
@@ -201,9 +254,17 @@ public struct LocalizationsCommand: AsyncParsableCommand {
                         operation: "localizations push", failed: failedLocales)
                 }
             }
+            if dryRun { return nil }
+            return MutationOutcome(
+                data: .object([
+                    "direction": .string(direction),
+                    "version_id": .string(versionId),
+                    "dir": .string(dir),
+                    "locales": .array(locales.map(JSONValue.string)),
+                ]))
         }
 
-        private func readTrimmed(at path: String) -> String? {
+        private static func readTrimmed(at path: String) -> String? {
             guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed

@@ -72,9 +72,23 @@ public struct VersionsCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            if let outcome = try await Self.execute(
+                client: client, output: output, appId: id, version: version,
+                platform: platform, releaseType: releaseType, dryRun: dryRun,
+                nextActions: globals.nextActions())
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId: String,
+            version: String, platform: String, releaseType: String, dryRun: Bool,
+            nextActions: NextActions
+        ) async throws -> MutationOutcome? {
             if dryRun {
-                output.info("[DRY RUN] Would create version \(version) for app \(id)")
-                return
+                output.info("[DRY RUN] Would create version \(version) for app \(appId)")
+                return nil
             }
             let spinner = output.startSpinner("Creating version \(version)")
             let body = VersionCreateRequest(
@@ -83,11 +97,21 @@ public struct VersionsCommand: AsyncParsableCommand {
                     attributes: VersionCreateAttributes(
                         platform: platform.uppercased(), versionString: version, releaseType: releaseType.uppercased()),
                     relationships: VersionCreateRelationships(
-                        app: RelationshipRef(data: TypeIDRef(type: "apps", id: id)))))
+                        app: RelationshipRef(data: TypeIDRef(type: "apps", id: appId)))))
             do {
                 let r: APIResponse<AppStoreVersion> = try await client.post("appStoreVersions", body: body)
                 spinner.stop()
                 output.success("Created version \(version) (ID: \(r.data.id))")
+                let state = r.data.attributes?.appStoreState
+                let next = nextActions.forVersions([(r.data.id, state)])
+                return MutationOutcome(
+                    data: .object([
+                        "id": .string(r.data.id),
+                        "version": .string(r.data.attributes?.versionString ?? version),
+                        "platform": .string(r.data.attributes?.platform ?? platform.uppercased()),
+                        "state": state.map(JSONValue.string) ?? .null,
+                    ]),
+                    next: next.isEmpty ? nil : next)
             } catch {
                 spinner.stop(success: false)
                 throw error
@@ -108,10 +132,23 @@ public struct VersionsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, versionId: versionId,
+                buildId: buildId, version: version, releaseType: releaseType, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
+            buildId: String?, version: String?, releaseType: String?, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             if dryRun {
                 output.info("[DRY RUN] Would update version \(versionId)")
-                return
+                return nil
             }
+            var data: [String: JSONValue] = ["id": .string(versionId)]
             if let b = buildId {
                 let s = output.startSpinner("Attaching build \(b)")
                 do {
@@ -121,6 +158,7 @@ public struct VersionsCommand: AsyncParsableCommand {
                     )
                     s.stop()
                     output.success("Build attached")
+                    data["attached_build_id"] = .string(b)
                 } catch {
                     s.stop(success: false)
                     throw error
@@ -134,15 +172,19 @@ public struct VersionsCommand: AsyncParsableCommand {
                         attributes: VersionUpdateAttributes(
                             versionString: version, releaseType: releaseType?.uppercased())))
                 do {
-                    let _: APIResponse<AppStoreVersion> = try await client.patch(
+                    let r: APIResponse<AppStoreVersion> = try await client.patch(
                         "appStoreVersions/\(versionId)", body: body)
                     s.stop()
                     output.success("Version updated")
+                    if let v = r.data.attributes?.versionString { data["version"] = .string(v) }
+                    if let rt = r.data.attributes?.releaseType { data["release_type"] = .string(rt) }
+                    if let st = r.data.attributes?.appStoreState { data["state"] = .string(st) }
                 } catch {
                     s.stop(success: false)
                     throw error
                 }
             }
+            return MutationOutcome(data: .object(data))
         }
     }
 
@@ -156,18 +198,21 @@ public struct VersionsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            try await Self.execute(
+            if let outcome = try await Self.execute(
                 client: client, output: output, versionId: versionId,
-                dryRun: dryRun, legacySubmit: legacySubmit)
+                dryRun: dryRun, legacySubmit: legacySubmit, nextActions: globals.nextActions())
+            {
+                output.printMutation(outcome)
+            }
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
-            dryRun: Bool, legacySubmit: Bool
-        ) async throws {
+            dryRun: Bool, legacySubmit: Bool, nextActions: NextActions
+        ) async throws -> MutationOutcome? {
             if dryRun {
                 output.info("[DRY RUN] Would submit version \(versionId) for review")
-                return
+                return nil
             }
             if legacySubmit {
                 printLegacySubmitDeprecationWarning()
@@ -179,15 +224,20 @@ public struct VersionsCommand: AsyncParsableCommand {
                             appStoreVersion: RelationshipRef(
                                 data: TypeIDRef(type: "appStoreVersions", id: versionId)))))
                 do {
-                    let _: APIResponse<SubmissionResponse> = try await client.post(
+                    let r: APIResponse<SubmissionResponse> = try await client.post(
                         "appStoreVersionSubmissions", body: body)
                     spinner.stop()
                     output.success("Submitted for review!")
+                    return MutationOutcome(
+                        data: .object([
+                            "version_id": .string(versionId),
+                            "submission_id": .string(r.data.id),
+                        ]),
+                        next: ["reject": nextActions.command(["versions", "reject", versionId])])
                 } catch {
                     spinner.stop(success: false)
                     throw error
                 }
-                return
             }
             let spinner = output.startSpinner("Submitting for review")
             do {
@@ -200,6 +250,15 @@ public struct VersionsCommand: AsyncParsableCommand {
                     result.reused
                         ? "Added to existing review submission and submitted!"
                         : "Submitted for review!")
+                return MutationOutcome(
+                    data: .object([
+                        "version_id": .string(versionId),
+                        "submission_id": .string(result.submission.id),
+                        "submission_state": result.submission.attributes?.state.map(JSONValue.string)
+                            ?? .null,
+                        "reused": .bool(result.reused),
+                    ]),
+                    next: ["reject": nextActions.command(["versions", "reject", versionId])])
             } catch {
                 spinner.stop(success: false)
                 throw error
@@ -218,6 +277,17 @@ public struct VersionsCommand: AsyncParsableCommand {
         init() {}
 
         func run() async throws {
+            let (client, _) = try globals.apiClient()
+            let output = try globals.outputFormatter()
+            let outcome = try await Self.execute(
+                client: client, output: output, versionId: versionId, action: action)
+            output.printMutation(outcome)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
+            action: String
+        ) async throws -> MutationOutcome {
             let state: String
             switch action.lowercased() {
             case "pause": state = "PAUSED"
@@ -231,8 +301,6 @@ public struct VersionsCommand: AsyncParsableCommand {
                 )
             }
 
-            let (client, _) = try globals.apiClient()
-            let output = try globals.outputFormatter()
             let spinner = output.startSpinner("\(action.capitalized) phased release")
             do {
                 // App Store Connect's PATCH endpoint takes the phased-release resource ID,
@@ -259,6 +327,12 @@ public struct VersionsCommand: AsyncParsableCommand {
                 )
                 spinner.stop()
                 output.success("Phased release \(action)d")
+                return MutationOutcome(
+                    data: .object([
+                        "id": .string(phased.id),
+                        "version_id": .string(versionId),
+                        "state": .string(state),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error
@@ -276,9 +350,20 @@ public struct VersionsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, versionId: versionId, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
+            dryRun: Bool
+        ) async throws -> MutationOutcome? {
             if dryRun {
                 output.info("[DRY RUN] Would reject version \(versionId)")
-                return
+                return nil
             }
             let spinner = output.startSpinner("Removing from review")
             do {
@@ -286,9 +371,16 @@ public struct VersionsCommand: AsyncParsableCommand {
                 // so resolve the version's app and platform first.
                 let (appId, platform) = try await ReviewSubmissionService.resolveAppAndPlatform(
                     versionId: versionId, client: client)
-                try await ReviewSubmissionService(client: client).cancel(appId: appId, platform: platform)
+                let canceled = try await ReviewSubmissionService(client: client)
+                    .cancel(appId: appId, platform: platform)
                 spinner.stop()
                 output.success("Review submission canceled")
+                return MutationOutcome(
+                    data: .object([
+                        "version_id": .string(versionId),
+                        "submission_id": .string(canceled.id),
+                        "submission_state": canceled.attributes?.state.map(JSONValue.string) ?? .null,
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error

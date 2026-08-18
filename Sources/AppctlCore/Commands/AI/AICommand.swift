@@ -28,15 +28,22 @@ public struct AICommand: AsyncParsableCommand {
         init() {}
         func run() async throws {
             let output = try globals.outputFormatter()
-            try Self.validate(maxLength: maxLength)
-            guard Self.isValidGitRef(since) else {
+            try Self.execute(
+                output: output, since: since, until: until, maxLength: maxLength, tone: tone)
+        }
+
+        static func execute(
+            output: OutputFormatter, since: String, until: String, maxLength: Int, tone: String
+        ) throws {
+            try validate(maxLength: maxLength)
+            guard isValidGitRef(since) else {
                 throw AppctlError.invalidInput(
                     field: "--since",
                     value: since,
                     expected: "A git ref (letters, digits, and ./_-~^@/, no leading dash)"
                 )
             }
-            guard Self.isValidGitRef(until) else {
+            guard isValidGitRef(until) else {
                 throw AppctlError.invalidInput(
                     field: "--until",
                     value: until,
@@ -44,7 +51,7 @@ public struct AICommand: AsyncParsableCommand {
                 )
             }
             let spinner = output.startSpinner("Reading git history")
-            guard let gitLog = Self.runGitLog(since: since, until: until) else {
+            guard let gitLog = runGitLog(since: since, until: until) else {
                 spinner.stop(success: false)
                 throw AppctlError.unsupportedOperation(
                     name: "ai release-notes",
@@ -108,7 +115,7 @@ public struct AICommand: AsyncParsableCommand {
             print(notes)
         }
 
-        private func cleanCommit(_ msg: String) -> String {
+        private static func cleanCommit(_ msg: String) -> String {
             var c = msg
             for p in ["feat:", "fix:", "chore:", "build:", "ci:", "perf:", "docs:", "style:", "refactor:", "test:"] {
                 if c.lowercased().hasPrefix(p) { c = String(c.dropFirst(p.count)) }
@@ -173,6 +180,12 @@ public struct AICommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(client: client, output: output, appId: id)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String
+        ) async throws {
             let spinner = output.startSpinner("Analyzing metadata")
             let r: APIResponse<App> = try await client.get(
                 "apps/\(id)", queryItems: [URLQueryItem(name: "fields[apps]", value: "name,bundleId,primaryLocale")])
@@ -203,6 +216,10 @@ public struct AICommand: AsyncParsableCommand {
 
         func run() async throws {
             let output = try globals.outputFormatter()
+            Self.execute(output: output, locales: locales)
+        }
+
+        static func execute(output: OutputFormatter, locales: String) {
             let targets = locales.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             output.info("Translation scaffolding for \(targets.count) locales")
             for locale in targets {

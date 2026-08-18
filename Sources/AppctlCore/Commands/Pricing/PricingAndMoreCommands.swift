@@ -21,6 +21,12 @@ public struct PricingCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(client: client, output: output, appId: id)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching availability settings")
             do {
                 let r: APIResponse<App> = try await client.get(
@@ -45,6 +51,12 @@ public struct PricingCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter
+        ) async throws {
             let spinner = output.startSpinner("Fetching territories")
             do {
                 let r: APIListResponse<Territory> = try await client.getList(
@@ -85,6 +97,12 @@ public struct IAPCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(client: client, output: output, appId: id)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching IAPs")
             do {
                 let r: APIListResponse<InAppPurchase> = try await client.getList(
@@ -118,6 +136,12 @@ public struct IAPCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(client: client, output: output, appId: id)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching subscriptions")
             do {
                 let r: APIListResponse<SubscriptionGroup> = try await client.getList(
@@ -169,6 +193,12 @@ public struct UsersCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, role: role)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, role: String?
+        ) async throws {
             let spinner = output.startSpinner("Fetching users")
             var q: [URLQueryItem] = [URLQueryItem(name: "fields[users]", value: "firstName,lastName,email,roles")]
             if let r = role { q.append(URLQueryItem(name: "filter[roles]", value: r.uppercased())) }
@@ -194,7 +224,10 @@ public struct UsersCommand: AsyncParsableCommand {
     struct Roles: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List available roles.")
         func run() throws {
-            let output = OutputFormatter()
+            Self.execute(output: OutputFormatter())
+        }
+
+        static func execute(output: OutputFormatter) {
             for (r, d) in [
                 ("ADMIN", "Full access"), ("DEVELOPER", "Manage builds/TestFlight"), ("MARKETING", "App metadata"),
                 ("FINANCE", "Financial reports"), ("SALES", "Sales reports"),
@@ -231,7 +264,16 @@ public struct ReviewCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
-            let (limit, pageSize) = try pagination.validated()
+            try await Self.execute(
+                client: client, output: output, appId: id, rating: rating,
+                limit: pagination.limit, pageSize: pagination.pageSize)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String,
+            rating: Int?, limit: Int?, pageSize: Int
+        ) async throws {
+            try PaginationOptions.validate(limit: limit, pageSize: pageSize)
             let spinner = output.startSpinner("Fetching reviews")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -270,13 +312,25 @@ public struct ReviewCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, reviewId: reviewId, response: response,
+                dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, reviewId: String,
+            response: String, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             if response.count > 5970 {
                 throw AppctlError.invalidInput(
                     field: "response", value: "\(response.count) chars", expected: "Max 5970")
             }
             if dryRun {
                 output.info("[DRY RUN] Would respond to review \(reviewId)")
-                return
+                return nil
             }
             let spinner = output.startSpinner("Posting response")
             struct RRReq: Encodable { let data: RRData }
@@ -297,9 +351,14 @@ public struct ReviewCommand: AsyncParsableCommand {
                     relationships: RRRel(
                         review: RelationshipRef(data: TypeIDRef(type: "customerReviews", id: reviewId)))))
             do {
-                let _: APIResponse<RRResp> = try await client.post("customerReviewResponses", body: body)
+                let r: APIResponse<RRResp> = try await client.post("customerReviewResponses", body: body)
                 spinner.stop()
                 output.success("Response posted")
+                return MutationOutcome(
+                    data: .object([
+                        "review_id": .string(reviewId),
+                        "response_id": .string(r.data.id),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error

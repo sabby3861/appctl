@@ -11,10 +11,14 @@ JSON mode is automatic when stdout is not a TTY (pipes, CI) and explicit with
 ## The envelope (contract v1)
 
 In JSON mode, every list/detail command (`apps list`, `versions list`,
-`auth status`, …), every `appctl api` call, and **every failure** prints exactly
-one envelope on stdout. Mutating commands (`versions submit`, `workflow
-release`, …) currently report success on stderr with an empty stdout and exit
-0 — success envelopes for them arrive with the execute-seam rollout.
+`auth status`, …), every `appctl api` call, every mutating command's success
+(`versions submit`, `workflow release`, …), and **every failure** prints
+exactly one envelope on stdout. A mutation's envelope carries the mutated
+resource in `data` (stable snake_case keys such as `id`, `version_id`,
+`submission_id`) and, where the new state permits an obvious follow-up, a
+`next` entry (e.g. `reject` after a submit). `--dry-run` emits no success
+envelope — nothing was mutated, so there is nothing to report (`builds upload
+--dry-run` is the one exception: it prints its planned request sequence).
 
 ```json
 {

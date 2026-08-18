@@ -16,6 +16,14 @@ public struct CertificatesCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(
+                client: client, output: output, type: type, expiringSoon: expiringSoon)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, type: String?,
+            expiringSoon: Bool
+        ) async throws {
             let spinner = output.startSpinner("Fetching certificates")
             var q: [URLQueryItem] = [
                 URLQueryItem(
@@ -73,6 +81,12 @@ public struct CertificatesCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter
+        ) async throws {
             let spinner = output.startSpinner("Fetching profiles")
             do {
                 let r: APIListResponse<Profile> = try await client.getList(
@@ -108,6 +122,12 @@ public struct CertificatesCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter
+        ) async throws {
             let spinner = output.startSpinner("Fetching devices")
             do {
                 let r: APIListResponse<Device> = try await client.getList(
@@ -139,6 +159,12 @@ public struct CertificatesCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter
+        ) async throws {
             let spinner = output.startSpinner("Fetching bundle IDs")
             do {
                 let r: APIListResponse<BundleID> = try await client.getList(

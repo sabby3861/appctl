@@ -33,12 +33,21 @@ public struct AuthCommand: AsyncParsableCommand {
         func run() async throws {
             let output = OutputFormatter()
             if removeKeychain {
-                try removeKeychainCredentials(output: output)
+                try Self.removeKeychainCredentials(output: output, dryRun: dryRun)
                 return
             }
             let keyID = try keyId ?? promptRequired("API Key ID")
             let issuerID = try issuerId ?? promptRequired("Issuer ID")
             let keyPath = try privateKeyPath ?? promptRequired("Path to .p8 key file")
+            try Self.execute(
+                output: output, keyID: keyID, issuerID: issuerID, keyPath: keyPath,
+                global: global, keychain: keychain, dryRun: dryRun)
+        }
+
+        static func execute(
+            output: OutputFormatter, keyID: String, issuerID: String, keyPath: String,
+            global: Bool, keychain: Bool, dryRun: Bool
+        ) throws {
             let resolved = (keyPath as NSString).expandingTildeInPath
             output.info("Validating private key...")
             switch AuthStore.validateKeyFile(at: resolved) {
@@ -48,7 +57,9 @@ public struct AuthCommand: AsyncParsableCommand {
                 throw error
             }
             if keychain {
-                try storeInKeychain(keyID: keyID, issuerID: issuerID, resolvedKeyPath: resolved, output: output)
+                try storeInKeychain(
+                    keyID: keyID, issuerID: issuerID, resolvedKeyPath: resolved,
+                    output: output, dryRun: dryRun)
                 return
             }
             let configPath: String
@@ -88,8 +99,9 @@ public struct AuthCommand: AsyncParsableCommand {
             output.success("Configuration saved to \(configPath)")
         }
 
-        private func storeInKeychain(
-            keyID: String, issuerID: String, resolvedKeyPath: String, output: OutputFormatter
+        private static func storeInKeychain(
+            keyID: String, issuerID: String, resolvedKeyPath: String, output: OutputFormatter,
+            dryRun: Bool
         ) throws {
             let pem = try String(contentsOfFile: resolvedKeyPath, encoding: .utf8)
             let store = KeychainCredentialStore()
@@ -113,7 +125,7 @@ public struct AuthCommand: AsyncParsableCommand {
                     + "Remove them with `appctl auth setup --remove-keychain`.")
         }
 
-        private func removeKeychainCredentials(output: OutputFormatter) throws {
+        private static func removeKeychainCredentials(output: OutputFormatter, dryRun: Bool) throws {
             let store = KeychainCredentialStore()
             let accounts = KeychainCredentialStore.Account.allCases
             if dryRun {
@@ -168,6 +180,12 @@ public struct AuthCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter
+        ) async throws {
             let spinner = output.startSpinner("Verifying credentials")
             do {
                 let r: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
@@ -188,6 +206,10 @@ public struct AuthCommand: AsyncParsableCommand {
         func run() async throws {
             let output = try globals.outputFormatter()
             let config = try globals.resolvedConfig()
+            Self.execute(output: output, config: config)
+        }
+
+        static func execute(output: OutputFormatter, config: AppctlConfig) {
             let masked = config.issuerID.map { id in id.count > 8 ? "\(id.prefix(4))…\(id.suffix(4))" : id }
             let store = KeychainCredentialStore()
             let source: String

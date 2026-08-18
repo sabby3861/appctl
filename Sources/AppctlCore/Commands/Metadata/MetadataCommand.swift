@@ -127,10 +127,24 @@ public struct MetadataCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            _ = try await Self.execute(
+            let summary = try await Self.execute(
                 client: client, output: output, appId: appId, version: version,
                 path: path ?? config.metadataPath ?? "./metadata",
                 dryRun: dryRun)
+            if !dryRun {
+                output.printMutation(Self.outcome(appId: appId, version: version, summary: summary))
+            }
+        }
+
+        static func outcome(appId: String, version: String, summary: Summary) -> MutationOutcome {
+            MutationOutcome(
+                data: .object([
+                    "app_id": .string(appId),
+                    "version": .string(version),
+                    "pushed_locales": .array(summary.pushed.map(JSONValue.string)),
+                    "created_locales": .array(summary.created.map(JSONValue.string)),
+                    "ignored": .array(summary.ignored.map(JSONValue.string)),
+                ]))
         }
 
         struct LocalePayload: Sendable {

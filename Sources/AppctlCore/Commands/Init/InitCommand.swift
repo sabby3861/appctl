@@ -99,21 +99,35 @@ public struct InitCommand: AsyncParsableCommand {
             keyID: keyID, issuerID: issuerID, privateKeyPath: resolvedKeyPath,
             verbose: globals.verbose, timeout: globals.timeout ?? 30)
         let client = try globals.apiClient(candidate: candidate)
-        try await Self.validateLive(client: client, output: output, next: nextCommands())
+        try await Self.execute(
+            client: client, output: output, keyID: keyID, issuerID: issuerID,
+            keyPath: keyPath, resolvedKeyPath: resolvedKeyPath, existing: existing,
+            bundleID: discovered.bundleID?.value, useKeychain: useKeychain,
+            configPath: configPath, exists: exists, dryRun: dryRun,
+            nextActions: globals.nextActions())
+    }
 
-        let values = Self.fileValues(
+    static func execute(
+        client: any AppStoreConnectClient, output: OutputFormatter, keyID: String,
+        issuerID: String, keyPath: String, resolvedKeyPath: String,
+        existing: [String: String], bundleID: String?, useKeychain: Bool,
+        configPath: String, exists: Bool, dryRun: Bool, nextActions: NextActions
+    ) async throws {
+        try await validateLive(client: client, output: output, next: nextCommands(nextActions))
+
+        let values = fileValues(
             existing: existing, keyID: keyID, issuerID: issuerID, keyPath: keyPath,
-            bundleID: discovered.bundleID?.value, useKeychain: useKeychain)
+            bundleID: bundleID, useKeychain: useKeychain)
         let rendered = ConfigWriter.renderTOML(values)
         let store = KeychainCredentialStore()
 
         if dryRun {
             var err = StandardError.shared
-            Self.printDryRun(
+            printDryRun(
                 rendered: rendered, configPath: configPath, exists: exists,
                 useKeychain: useKeychain, keychainService: store.service,
                 output: output, stream: &err)
-            printNextSteps(output: output)
+            printNextSteps(output: output, nextActions: nextActions)
             return
         }
 
@@ -130,7 +144,7 @@ public struct InitCommand: AsyncParsableCommand {
                 "Previous config backed up to \(backup) (comments are not carried into the rewritten file).")
         }
         output.success("\(exists ? "Updated" : "Created") \(configPath)")
-        printNextSteps(output: output)
+        printNextSteps(output: output, nextActions: nextActions)
     }
 
     // MARK: - Credential discovery
@@ -333,17 +347,15 @@ public struct InitCommand: AsyncParsableCommand {
         return answer == "y" || answer == "yes"
     }
 
-    private func nextCommands() -> [String: String] {
-        let next = globals.nextActions()
-        return [
+    private static func nextCommands(_ next: NextActions) -> [String: String] {
+        [
             "listApps": next.command(["apps", "list"]),
             "doctor": next.command(["doctor"]),
             "release": next.command(["workflow", "release"]),
         ]
     }
 
-    private func printNextSteps(output: OutputFormatter) {
-        let next = globals.nextActions()
+    private static func printNextSteps(output: OutputFormatter, nextActions next: NextActions) {
         output.info("Next steps:")
         output.info("  \(next.command(["apps", "list"])) — list your apps")
         output.info("  \(next.command(["doctor"])) — check your environment")

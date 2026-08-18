@@ -25,10 +25,14 @@ public struct WorkflowCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
-            try await Self.execute(
+            if let outcome = try await Self.execute(
                 client: client, output: output, appId: id, version: version, buildId: buildId,
                 platform: platform, releaseType: releaseType, phased: phased, dryRun: dryRun,
-                skipSubmit: skipSubmit, legacySubmit: legacySubmit)
+                skipSubmit: skipSubmit, legacySubmit: legacySubmit,
+                nextActions: globals.nextActions())
+            {
+                output.printMutation(outcome)
+            }
         }
 
         struct ResolvedBuild: Sendable {
@@ -62,8 +66,9 @@ public struct WorkflowCommand: AsyncParsableCommand {
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, appId id: String,
             version: String, buildId: String?, platform: String, releaseType: String,
-            phased: Bool, dryRun: Bool, skipSubmit: Bool, legacySubmit: Bool
-        ) async throws {
+            phased: Bool, dryRun: Bool, skipSubmit: Bool, legacySubmit: Bool,
+            nextActions: NextActions
+        ) async throws -> MutationOutcome? {
             output.info("Starting release pipeline for \(version)")
             // Step 1: Resolve build
             let resolvedBuildId: String
@@ -119,7 +124,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
                 output.info(
                     "[DRY RUN] 1.Create \(version) 2.Attach build \(buildVersion) \(phased ? "3.Phased release " : "")\(!skipSubmit ? "\(phased ? "4" : "3").Submit" : "")"
                 )
-                return
+                return nil
             }
             // Step 2: Create version
             let vs = output.startSpinner("Creating version \(version)")
@@ -172,6 +177,20 @@ public struct WorkflowCommand: AsyncParsableCommand {
                 }
             }
             output.success("Release pipeline complete for \(version)")
+            let next =
+                skipSubmit
+                ? ["submit": nextActions.command(["versions", "submit", vr.data.id])]
+                : ["reject": nextActions.command(["versions", "reject", vr.data.id])]
+            return MutationOutcome(
+                data: .object([
+                    "app_id": .string(id),
+                    "version": .string(version),
+                    "version_id": .string(vr.data.id),
+                    "build_id": .string(resolvedBuildId),
+                    "build_version": .string(buildVersion),
+                    "submitted": .bool(!skipSubmit),
+                ]),
+                next: next)
         }
     }
 
@@ -188,6 +207,18 @@ public struct WorkflowCommand: AsyncParsableCommand {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            if let outcome = try await Self.execute(
+                client: client, output: output, appId: id, groupId: groupId,
+                internalGroup: `internal`, externalGroup: external, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String,
+            groupId: String?, internalGroup: Bool, externalGroup: Bool, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             let s = output.startSpinner("Finding latest build")
             let builds: APIListResponse<Build> = try await client.getList(
                 "builds",
@@ -228,7 +259,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
                 if groups.data.isEmpty {
                     throw AppctlError.resourceNotFound(type: "BetaGroup", identifier: "app \(id)")
                 }
-                if `internal` {
+                if internalGroup {
                     guard let g = groups.data.first(where: { $0.attributes?.isInternalGroup == true }) else {
                         throw AppctlError.resourceNotFound(
                             type: "BetaGroup",
@@ -236,7 +267,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
                         )
                     }
                     targetGroupId = g.id
-                } else if external {
+                } else if externalGroup {
                     guard let g = groups.data.first(where: { $0.attributes?.isInternalGroup != true }) else {
                         throw AppctlError.resourceNotFound(
                             type: "BetaGroup",
@@ -257,7 +288,7 @@ public struct WorkflowCommand: AsyncParsableCommand {
             }
             if dryRun {
                 output.info("[DRY RUN] Would distribute to group \(targetGroupId)")
-                return
+                return nil
             }
             let ds = output.startSpinner("Distributing to TestFlight")
             try await client.postVoid(
@@ -265,6 +296,13 @@ public struct WorkflowCommand: AsyncParsableCommand {
                 body: BuildGroupAssignmentBody(data: [TypeIDRef(type: "builds", id: build.id)]))
             ds.stop()
             output.success("Build distributed to TestFlight!")
+            return MutationOutcome(
+                data: .object([
+                    "app_id": .string(id),
+                    "build_id": .string(build.id),
+                    "build_version": build.attributes?.version.map(JSONValue.string) ?? .null,
+                    "group_id": .string(targetGroupId),
+                ]))
         }
     }
 
@@ -279,11 +317,19 @@ public struct WorkflowCommand: AsyncParsableCommand {
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
-            try Self.validate(interval: interval, timeout: maxDuration)
-
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
             let id = try resolveAppID(appId, config: config)
+            try await Self.execute(
+                client: client, output: output, appId: id, interval: interval,
+                maxDuration: maxDuration)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, appId id: String,
+            interval: Int, maxDuration: Int
+        ) async throws {
+            try validate(interval: interval, timeout: maxDuration)
             output.info("Watching app \(id) (Ctrl+C to stop)")
 
             var lastBuild: [String: String] = [:]
@@ -370,6 +416,13 @@ public struct WorkflowCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, buildA: buildA, buildB: buildB)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, buildA: String,
+            buildB: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching builds")
             let rA: APIResponse<Build> = try await client.get("builds/\(buildA)")
             let rB: APIResponse<Build> = try await client.get("builds/\(buildB)")

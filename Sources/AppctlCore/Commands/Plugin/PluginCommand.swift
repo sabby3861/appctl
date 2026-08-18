@@ -10,7 +10,10 @@ public struct PluginCommand: AsyncParsableCommand {
     struct List: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List installed plugins.")
         func run() throws {
-            let output = OutputFormatter()
+            Self.execute(output: OutputFormatter())
+        }
+
+        static func execute(output: OutputFormatter) {
             let plugins = PluginManager.discover()
             if plugins.isEmpty {
                 output.info("No plugins found. Create one: `appctl plugin create my-plugin`")
@@ -26,6 +29,10 @@ public struct PluginCommand: AsyncParsableCommand {
         @Argument(parsing: .captureForPassthrough, help: "Arguments to pass.") var arguments: [String] = []
         init() {}
         func run() throws {
+            try Self.execute(name: name, arguments: arguments)
+        }
+
+        static func execute(name: String, arguments: [String]) throws {
             let plugins = PluginManager.discover()
             guard let plugin = plugins.first(where: { $0.name == name }) else {
                 throw AppctlError.resourceNotFound(type: "Plugin", identifier: name)
@@ -65,7 +72,10 @@ public struct PluginCommand: AsyncParsableCommand {
         @Argument(help: "Plugin name.") var name: String
         init() {}
         func run() throws {
-            let output = OutputFormatter()
+            try Self.execute(output: OutputFormatter(), name: name)
+        }
+
+        static func execute(output: OutputFormatter, name: String) throws {
             let dir = "appctl-\(name)"
             guard !FileManager.default.fileExists(atPath: dir) else {
                 output.warning("'\(dir)' already exists.")

@@ -60,6 +60,12 @@ public struct AppsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, identifier: identifier)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, identifier: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching app details")
             do {
                 let app: App

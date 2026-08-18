@@ -8,6 +8,10 @@ public struct VersionCommand: ParsableCommand {
     @Flag(name: .long, help: "Version number only.") var short = false
     public init() {}
     public func run() throws {
+        Self.execute(short: short)
+    }
+
+    static func execute(short: Bool) {
         if short {
             print(AppctlVersion.current)
         } else {

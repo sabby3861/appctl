@@ -74,6 +74,12 @@ public struct BuildsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, buildId: buildId)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, buildId: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching build details")
             do {
                 let r: APIResponse<Build> = try await client.get("builds/\(buildId)")
@@ -135,20 +141,22 @@ public struct BuildsCommand: AsyncParsableCommand {
                 throw AppctlError.fileNotFound(path: archive.path)
             }
             let metadata = try resolveMetadata(archive: archive)
+            let outcome: MutationOutcome?
             switch backend {
             case "api":
-                try await Self.executeAPI(
+                outcome = try await Self.executeAPI(
                     client: client, output: output, archive: archive, appID: appID,
                     platform: platform, shortVersion: metadata.shortVersion,
                     bundleVersion: metadata.bundleVersion, wait: wait, dryRun: dryRun)
             case "altool":
-                try await Self.executeAltool(
+                outcome = try await Self.executeAltool(
                     client: client, output: output, config: config, archive: archive,
                     appID: appID, platform: platform, metadata: metadata,
                     wait: wait, dryRun: dryRun, runner: SubprocessRunner())
             default:
                 throw AppctlError.invalidInput(field: "backend", value: backend, expected: "api or altool")
             }
+            if let outcome { output.printMutation(outcome) }
         }
 
         /// Flags win over IPA parsing; parsing only runs for values not supplied.
@@ -184,7 +192,7 @@ public struct BuildsCommand: AsyncParsableCommand {
             appID: String, platform: String, shortVersion: String, bundleVersion: String,
             wait: Bool, dryRun: Bool, retryBaseDelay: TimeInterval = 1.0,
             pollInterval: Duration = .seconds(30), maxPolls: Int = 240
-        ) async throws {
+        ) async throws -> MutationOutcome? {
             guard let ascPlatform = ascPlatform(for: platform) else {
                 throw AppctlError.invalidInput(
                     field: "platform", value: platform, expected: "ios, macos, tvos, or visionos")
@@ -202,7 +210,7 @@ public struct BuildsCommand: AsyncParsableCommand {
                 // consumers, where stderr decoration is suppressed.
                 output.printDetail(
                     fields: steps.enumerated().map { ("\($0.offset + 1).", $0.element) })
-                return
+                return nil
             }
             let service = BuildUploadService(client: client, retryBaseDelay: retryBaseDelay)
             let reporter = ProgressReporter(output: output)
@@ -216,18 +224,20 @@ public struct BuildsCommand: AsyncParsableCommand {
                     "Resumed: \(result.partsSkipped) part(s) were already uploaded, sent \(result.partsUploaded).")
             }
             output.success("Upload complete (buildUpload \(result.buildUploadID)). Processing has started.")
-            if output.format == .json && !wait {
-                output.printDetail(fields: [
-                    ("Build Upload ID:", result.buildUploadID),
-                    ("Parts Uploaded:", String(result.partsUploaded)),
-                    ("Parts Skipped:", String(result.partsSkipped)),
-                ])
-            }
+            var data: [String: JSONValue] = [
+                "backend": .string("api"),
+                "build_upload_id": .string(result.buildUploadID),
+                "parts_uploaded": .int(result.partsUploaded),
+                "parts_skipped": .int(result.partsSkipped),
+            ]
             if wait {
-                try await waitForProcessing(
+                let processed = try await waitForProcessing(
                     client: client, output: output, appID: appID, version: bundleVersion,
                     pollInterval: pollInterval, maxPolls: maxPolls)
+                data["processing_state"] = .string(processed.state)
+                data["version"] = processed.version.map(JSONValue.string) ?? .null
             }
+            return MutationOutcome(data: .object(data))
         }
 
         static func executeAltool(
@@ -235,7 +245,7 @@ public struct BuildsCommand: AsyncParsableCommand {
             archive: URL, appID: String, platform: String, metadata: ArchiveMetadata,
             wait: Bool, dryRun: Bool, runner: any ProcessRunner,
             pollInterval: Duration = .seconds(30), maxPolls: Int = 240
-        ) async throws {
+        ) async throws -> MutationOutcome? {
             guard let altoolType = AltoolBackend.altoolType(forPlatform: platform) else {
                 throw AppctlError.invalidInput(
                     field: "platform", value: platform, expected: "ios, macos, tvos, or visionos")
@@ -254,18 +264,25 @@ public struct BuildsCommand: AsyncParsableCommand {
             if dryRun {
                 output.info("Dry run — would execute:")
                 print(invocation.joined(separator: " "))
-                return
+                return nil
             }
             guard AltoolBackend.keyFileExists(keyID: keyID) else {
                 throw AppctlError.altoolKeyNotFound(keyID: keyID, searchedDirs: AltoolBackend.keySearchDirs)
             }
             try await AltoolBackend.run(invocation: invocation, runner: runner, output: output)
             output.success("altool upload complete. Processing has started.")
+            var data: [String: JSONValue] = [
+                "backend": .string("altool"),
+                "file": .string(archive.lastPathComponent),
+            ]
             if wait {
-                try await waitForProcessing(
+                let processed = try await waitForProcessing(
                     client: client, output: output, appID: appID, version: metadata.bundleVersion,
                     pollInterval: pollInterval, maxPolls: maxPolls)
+                data["processing_state"] = .string(processed.state)
+                data["version"] = processed.version.map(JSONValue.string) ?? .null
             }
+            return MutationOutcome(data: .object(data))
         }
 
         /// Polls `GET /v1/builds` until the uploaded build reaches a terminal
@@ -275,7 +292,7 @@ public struct BuildsCommand: AsyncParsableCommand {
         static func waitForProcessing(
             client: any AppStoreConnectClient, output: OutputFormatter, appID: String,
             version: String?, pollInterval: Duration, maxPolls: Int
-        ) async throws {
+        ) async throws -> (state: String, version: String?) {
             if version == nil || version?.isEmpty == true {
                 output.warning(
                     "Resolving build by newest upload — if multiple uploads are in flight this may watch the wrong build."
@@ -303,7 +320,7 @@ public struct BuildsCommand: AsyncParsableCommand {
                 case "VALID":
                     spinner.stop()
                     output.success("Build \(r.data.first?.attributes?.version ?? "?") processed: VALID")
-                    return
+                    return (state: "VALID", version: r.data.first?.attributes?.version)
                 case "FAILED", "INVALID":
                     spinner.stop(success: false)
                     throw AppctlError.buildProcessingFailed(state: state ?? "?", details: [])
@@ -329,18 +346,32 @@ public struct BuildsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            let outcome = try await Self.execute(
+                client: client, output: output, buildId: buildId, usesEncryption: usesEncryption)
+            output.printMutation(outcome)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, buildId: String,
+            usesEncryption: Bool
+        ) async throws -> MutationOutcome {
             let spinner = output.startSpinner("Setting export compliance")
             let body = ComplianceUpdateRequest(
                 data: ComplianceUpdateData(
                     type: "builds", id: buildId,
                     attributes: ComplianceUpdateAttributes(usesNonExemptEncryption: usesEncryption)))
             do {
-                let _: APIResponse<Build> = try await client.patch("builds/\(buildId)", body: body)
+                let r: APIResponse<Build> = try await client.patch("builds/\(buildId)", body: body)
                 spinner.stop()
                 output.success(
                     usesEncryption
                         ? "Compliance declared: uses non-exempt encryption"
                         : "Compliance declared: exempt (standard HTTPS only)")
+                return MutationOutcome(
+                    data: .object([
+                        "id": .string(r.data.id),
+                        "uses_non_exempt_encryption": .bool(usesEncryption),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error

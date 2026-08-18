@@ -343,10 +343,12 @@ private let serverError = """
         await mock.queue(buildsList(state: "PROCESSING"))
         await mock.queue(buildsList(state: "VALID"))
 
-        try await BuildsCommand.Upload.waitForProcessing(
+        let processed = try await BuildsCommand.Upload.waitForProcessing(
             client: mock, output: quietOutput(), appID: "APP-1", version: "42",
             pollInterval: .zero, maxPolls: 5)
 
+        #expect(processed.state == "VALID")
+        #expect(processed.version == "42")
         let requests = await mock.requests
         #expect(requests.count == 3, "polls until the terminal state, including before the build appears")
         #expect(requests[0].path == "builds")

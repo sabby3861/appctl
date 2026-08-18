@@ -18,6 +18,10 @@ struct CompletionsCommand: ParsableCommand {
     var shell: String
 
     func run() throws {
+        try Self.execute(shell: shell)
+    }
+
+    static func execute(shell: String) throws {
         guard let target = CompletionShell(rawValue: shell.lowercased()) else {
             throw AppctlError.invalidInput(
                 field: "shell", value: shell,

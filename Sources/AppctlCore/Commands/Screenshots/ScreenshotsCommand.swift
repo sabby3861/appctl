@@ -22,9 +22,25 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, config) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            _ = try await Self.execute(
+            let summary = try await Self.execute(
                 client: client, output: output, appId: appId, version: version,
                 path: path ?? config.screenshotsPath ?? "./screenshots", dryRun: dryRun)
+            if !dryRun {
+                output.printMutation(Self.outcome(appId: appId, version: version, summary: summary))
+            }
+        }
+
+        static func outcome(
+            appId: String, version: String, summary: ScreenshotUploadService.Summary
+        ) -> MutationOutcome {
+            MutationOutcome(
+                data: .object([
+                    "app_id": .string(appId),
+                    "version": .string(version),
+                    "uploaded_count": .int(summary.uploadedCount),
+                    "localizations_created": .array(summary.localizationsCreated.map(JSONValue.string)),
+                    "sets_created": .int(summary.setsCreated),
+                ]))
         }
 
         static func execute(
@@ -59,6 +75,12 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            try await Self.execute(client: client, output: output, versionId: versionId)
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, versionId: String
+        ) async throws {
             let spinner = output.startSpinner("Fetching screenshots")
             do {
                 let r: APIListResponse<ScreenshotSet> = try await client.getList(
@@ -88,15 +110,31 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
+            if let outcome = try await Self.execute(
+                client: client, output: output, screenshotId: screenshotId, dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
+        }
+
+        static func execute(
+            client: any AppStoreConnectClient, output: OutputFormatter, screenshotId: String,
+            dryRun: Bool
+        ) async throws -> MutationOutcome? {
             if dryRun {
                 output.info("[DRY RUN] Would delete screenshot \(screenshotId)")
-                return
+                return nil
             }
             let spinner = output.startSpinner("Deleting screenshot")
             do {
                 try await client.delete("appScreenshots/\(screenshotId)")
                 spinner.stop()
                 output.success("Screenshot deleted")
+                return MutationOutcome(
+                    data: .object([
+                        "id": .string(screenshotId),
+                        "deleted": .bool(true),
+                    ]))
             } catch {
                 spinner.stop(success: false)
                 throw error

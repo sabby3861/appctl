@@ -204,12 +204,24 @@ private func quietOutput() -> OutputFormatter {
         "expired":false,"usesNonExemptEncryption":false}}}
         """
 
+    @Test func dryRunIssuesNoRequests() async throws {
+        let mock = MockAppStoreConnectClient()
+
+        let outcome = try await BuildsCommand.SetCompliance.execute(
+            client: mock, output: quietOutput(), buildId: "build-1", usesEncryption: true,
+            dryRun: true)
+
+        #expect(await mock.requests.isEmpty, "--dry-run must never touch the API")
+        #expect(outcome == nil, "--dry-run produces no success envelope")
+    }
+
     @Test func patchesComplianceAndReturnsOutcome() async throws {
         let mock = MockAppStoreConnectClient()
         await mock.queue(Self.build)
 
         let outcome = try await BuildsCommand.SetCompliance.execute(
-            client: mock, output: quietOutput(), buildId: "build-1", usesEncryption: false)
+            client: mock, output: quietOutput(), buildId: "build-1", usesEncryption: false,
+            dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -219,7 +231,7 @@ private func quietOutput() -> OutputFormatter {
         #expect(attrs["usesNonExemptEncryption"] as? Bool == false)
 
         #expect(
-            outcome.data
+            try #require(outcome).data
                 == .object([
                     "id": .string("build-1"),
                     "uses_non_exempt_encryption": .bool(false),
@@ -228,11 +240,23 @@ private func quietOutput() -> OutputFormatter {
 }
 
 @Suite("TestFlight distribute command") struct TestFlightDistributeCommandTests {
+    @Test func dryRunIssuesNoRequests() async throws {
+        let mock = MockAppStoreConnectClient()
+
+        let outcome = try await TestFlightCommand.Distribute.execute(
+            client: mock, output: quietOutput(), buildId: "build-1", groupId: "group-1",
+            dryRun: true)
+
+        #expect(await mock.requests.isEmpty, "--dry-run must never touch the API")
+        #expect(outcome == nil, "--dry-run produces no success envelope")
+    }
+
     @Test func postsBuildToGroupRelationshipAndReturnsOutcome() async throws {
         let mock = MockAppStoreConnectClient()
 
         let outcome = try await TestFlightCommand.Distribute.execute(
-            client: mock, output: quietOutput(), buildId: "build-1", groupId: "group-1")
+            client: mock, output: quietOutput(), buildId: "build-1", groupId: "group-1",
+            dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -243,7 +267,7 @@ private func quietOutput() -> OutputFormatter {
         #expect(refs.first?["id"] as? String == "build-1")
 
         #expect(
-            outcome.data
+            try #require(outcome).data
                 == .object([
                     "build_id": .string("build-1"),
                     "group_id": .string("group-1"),
@@ -483,14 +507,37 @@ private func quietOutput() -> OutputFormatter {
         {"data":{"type":"appStoreVersionPhasedReleases","id":"phased-1"}}
         """
 
+    @Test func dryRunIssuesNoRequests() async throws {
+        let mock = MockAppStoreConnectClient()
+
+        let outcome = try await VersionsCommand.PhasedRelease.execute(
+            client: mock, output: quietOutput(), versionId: "ver-1", action: "pause",
+            dryRun: true)
+
+        #expect(await mock.requests.isEmpty, "--dry-run must never touch the API")
+        #expect(outcome == nil, "--dry-run produces no success envelope")
+    }
+
     @Test func invalidActionFailsBeforeAnyRequest() async throws {
         let mock = MockAppStoreConnectClient()
 
         await #expect(throws: AppctlError.self) {
             _ = try await VersionsCommand.PhasedRelease.execute(
-                client: mock, output: quietOutput(), versionId: "ver-1", action: "restart")
+                client: mock, output: quietOutput(), versionId: "ver-1", action: "restart",
+                dryRun: false)
         }
         #expect(await mock.requests.isEmpty, "validation must fail before any request is issued")
+    }
+
+    @Test func invalidActionFailsEvenUnderDryRun() async throws {
+        let mock = MockAppStoreConnectClient()
+
+        await #expect(throws: AppctlError.self) {
+            _ = try await VersionsCommand.PhasedRelease.execute(
+                client: mock, output: quietOutput(), versionId: "ver-1", action: "restart",
+                dryRun: true)
+        }
+        #expect(await mock.requests.isEmpty)
     }
 
     @Test func resolvesPhasedReleaseThenPatchesState() async throws {
@@ -499,7 +546,8 @@ private func quietOutput() -> OutputFormatter {
         await mock.queue(Self.phasedRelease)
 
         let outcome = try await VersionsCommand.PhasedRelease.execute(
-            client: mock, output: quietOutput(), versionId: "ver-1", action: "pause")
+            client: mock, output: quietOutput(), versionId: "ver-1", action: "pause",
+            dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 2)
@@ -511,7 +559,7 @@ private func quietOutput() -> OutputFormatter {
         #expect(attrs["phasedReleaseState"] as? String == "PAUSED")
 
         #expect(
-            outcome.data
+            try #require(outcome).data
                 == .object([
                     "id": .string("phased-1"),
                     "version_id": .string("ver-1"),
@@ -525,9 +573,43 @@ private func quietOutput() -> OutputFormatter {
 
         await #expect(throws: AppctlError.self) {
             _ = try await VersionsCommand.PhasedRelease.execute(
-                client: mock, output: quietOutput(), versionId: "ver-1", action: "complete")
+                client: mock, output: quietOutput(), versionId: "ver-1", action: "complete",
+                dryRun: false)
         }
         #expect(await mock.requests.count == 1, "lookup only — no PATCH without a phased release")
+    }
+}
+
+@Suite("Auth verify command") struct AuthVerifyCommandTests {
+    @Test func returnsEnvelopeDataWithAppCount() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(
+            """
+            {"data":[{"type":"apps","id":"app-1","attributes":{"name":"My App"}}],\
+            "meta":{"paging":{"total":42,"limit":1}}}
+            """)
+
+        let data = try await AuthCommand.Verify.execute(client: mock, output: quietOutput())
+
+        let requests = await mock.requests
+        try #require(requests.count == 1)
+        #expect(requests[0].method == "GET")
+        #expect(requests[0].path == "apps")
+        let items = try #require(requests[0].queryItems)
+        #expect(items.contains(URLQueryItem(name: "limit", value: "1")))
+
+        #expect(data == .object(["authenticated": .bool(true), "app_count": .int(42)]))
+    }
+
+    @Test func zeroAppsIsStillAuthenticated() async throws {
+        let mock = MockAppStoreConnectClient()
+        await mock.queue(#"{"data":[],"meta":{"paging":{"total":0,"limit":1}}}"#)
+
+        let data = try await AuthCommand.Verify.execute(client: mock, output: quietOutput())
+
+        #expect(
+            data == .object(["authenticated": .bool(true), "app_count": .int(0)]),
+            "a brand-new account with no apps must still verify successfully")
     }
 }
 

@@ -14,7 +14,9 @@ public struct ScreenshotsCommand: AsyncParsableCommand {
             abstract: "Upload screenshots from a fastlane-layout directory (<path>/<locale>/*.png|jpg).")
         @Option(name: .long, help: "App ID.") var appId: String
         @Option(name: .long, help: "Version string (e.g. 2.1.0).") var version: String
-        @Option(name: .long, help: "Screenshots directory (default: paths.screenshots from config, else ./screenshots).")
+        @Option(
+            name: .long,
+            help: "Screenshots directory (default: paths.screenshots from config, else ./screenshots).")
         var path: String?
         @Flag(name: .long, help: "Preview without uploading.") var dryRun = false
         @OptionGroup var globals: GlobalOptions

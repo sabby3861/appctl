@@ -180,18 +180,20 @@ public struct AuthCommand: AsyncParsableCommand {
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            try await Self.execute(client: client, output: output)
+            let data = try await Self.execute(client: client, output: output)
+            if output.format == .json { output.printEnvelope(data: data) }
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter
-        ) async throws {
+        ) async throws -> JSONValue {
             let spinner = output.startSpinner("Verifying credentials")
             do {
                 let r: APIListResponse<App> = try await client.getList("apps", limit: 1, pageSize: 1)
                 spinner.stop()
                 let total = r.meta?.paging?.total ?? r.data.count
                 output.success("Authentication successful. Account has \(total) app\(total == 1 ? "" : "s").")
+                return .object(["authenticated": .bool(true), "app_count": .int(total)])
             } catch {
                 spinner.stop(success: false)
                 throw error

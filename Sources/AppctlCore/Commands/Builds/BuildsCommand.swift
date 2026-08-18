@@ -341,20 +341,28 @@ public struct BuildsCommand: AsyncParsableCommand {
             commandName: "set-compliance", abstract: "Declare export compliance for a build.")
         @Argument(help: "Build ID.") var buildId: String
         @Flag(name: .long, help: "App uses non-exempt encryption.") var usesEncryption = false
+        @Flag(name: .long, help: "Preview without changes.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            let outcome = try await Self.execute(
-                client: client, output: output, buildId: buildId, usesEncryption: usesEncryption)
-            output.printMutation(outcome)
+            if let outcome = try await Self.execute(
+                client: client, output: output, buildId: buildId, usesEncryption: usesEncryption,
+                dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, buildId: String,
-            usesEncryption: Bool
-        ) async throws -> MutationOutcome {
+            usesEncryption: Bool, dryRun: Bool
+        ) async throws -> MutationOutcome? {
+            if dryRun {
+                output.info("[DRY RUN] Would declare export compliance for build \(buildId)")
+                return nil
+            }
             let spinner = output.startSpinner("Setting export compliance")
             let body = ComplianceUpdateRequest(
                 data: ComplianceUpdateData(

@@ -273,21 +273,25 @@ public struct VersionsCommand: AsyncParsableCommand {
         )
         @Argument(help: "Version ID.") var versionId: String
         @Option(name: .long, help: "Action: pause, resume, complete.") var action: String
+        @Flag(name: .long, help: "Preview without changes.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
 
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            let outcome = try await Self.execute(
-                client: client, output: output, versionId: versionId, action: action)
-            output.printMutation(outcome)
+            if let outcome = try await Self.execute(
+                client: client, output: output, versionId: versionId, action: action,
+                dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, versionId: String,
-            action: String
-        ) async throws -> MutationOutcome {
+            action: String, dryRun: Bool
+        ) async throws -> MutationOutcome? {
             let state: String
             switch action.lowercased() {
             case "pause": state = "PAUSED"
@@ -299,6 +303,10 @@ public struct VersionsCommand: AsyncParsableCommand {
                     value: action,
                     expected: "pause, resume, or complete"
                 )
+            }
+            if dryRun {
+                output.info("[DRY RUN] Would \(action.lowercased()) phased release for version \(versionId)")
+                return nil
             }
 
             let spinner = output.startSpinner("\(action.capitalized) phased release")

@@ -97,20 +97,28 @@ public struct TestFlightCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Add a build to a beta group.")
         @Argument(help: "Build ID.") var buildId: String
         @Option(name: .long, help: "Beta Group ID.") var groupId: String
+        @Flag(name: .long, help: "Preview without changes.") var dryRun = false
         @OptionGroup var globals: GlobalOptions
         init() {}
         func run() async throws {
             let (client, _) = try globals.apiClient()
             let output = try globals.outputFormatter()
-            let outcome = try await Self.execute(
-                client: client, output: output, buildId: buildId, groupId: groupId)
-            output.printMutation(outcome)
+            if let outcome = try await Self.execute(
+                client: client, output: output, buildId: buildId, groupId: groupId,
+                dryRun: dryRun)
+            {
+                output.printMutation(outcome)
+            }
         }
 
         static func execute(
             client: any AppStoreConnectClient, output: OutputFormatter, buildId: String,
-            groupId: String
-        ) async throws -> MutationOutcome {
+            groupId: String, dryRun: Bool
+        ) async throws -> MutationOutcome? {
+            if dryRun {
+                output.info("[DRY RUN] Would add build \(buildId) to group \(groupId)")
+                return nil
+            }
             let spinner = output.startSpinner("Distributing build")
             do {
                 try await client.postVoid(

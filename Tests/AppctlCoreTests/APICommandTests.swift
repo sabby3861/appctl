@@ -16,7 +16,7 @@ private let base = "https://api.appstoreconnect.apple.com"
         _ = try await APICommand.execute(
             client: mock, method: "get", path: "apps?limit=5",
             fields: ["filter[bundleId]=com.example.app"], inputBody: nil,
-            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false, audit: nil)
+            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -38,7 +38,7 @@ private let base = "https://api.appstoreconnect.apple.com"
             _ = try await APICommand.execute(
                 client: mock, method: "GET", path: "https://evil.example.com/v1/apps",
                 fields: [], inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-                confirm: false, dryRun: false, audit: nil)
+                confirm: false, dryRun: false)
         }
         #expect(await mock.requests.isEmpty, "the signed token must never leave the ASC host")
     }
@@ -50,7 +50,7 @@ private let base = "https://api.appstoreconnect.apple.com"
 
         let outcome = try await APICommand.execute(
             client: mock, method: "GET", path: "/v1/apps", fields: [], inputBody: nil,
-            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false, audit: nil)
+            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false)
 
         #expect(outcome.next == "\(base)/v1/apps?cursor=x")
         #expect(outcome.executed)
@@ -69,7 +69,7 @@ private let base = "https://api.appstoreconnect.apple.com"
 
         let outcome = try await APICommand.execute(
             client: mock, method: "GET", path: "/v1/betaGroups", fields: [], inputBody: nil,
-            paginate: true, limit: nil, pageSize: 200, confirm: false, dryRun: false, audit: nil)
+            paginate: true, limit: nil, pageSize: 200, confirm: false, dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 2)
@@ -90,7 +90,7 @@ private let base = "https://api.appstoreconnect.apple.com"
 
         let outcome = try await APICommand.execute(
             client: mock, method: "GET", path: "/v1/apps", fields: [], inputBody: nil,
-            paginate: true, limit: 3, pageSize: 2, confirm: false, dryRun: false, audit: nil)
+            paginate: true, limit: 3, pageSize: 2, confirm: false, dryRun: false)
 
         #expect(outcome.document["data"]?.array?.count == 3)
     }
@@ -101,7 +101,7 @@ private let base = "https://api.appstoreconnect.apple.com"
             _ = try await APICommand.execute(
                 client: mock, method: "POST", path: "/v1/betaGroups", fields: ["name=X"],
                 inputBody: nil, paginate: true, limit: nil, pageSize: 200,
-                confirm: false, dryRun: false, audit: nil)
+                confirm: false, dryRun: false)
         }
         #expect(await mock.requests.isEmpty)
     }
@@ -111,18 +111,23 @@ private let base = "https://api.appstoreconnect.apple.com"
         await #expect(throws: AppctlError.self) {
             _ = try await APICommand.execute(
                 client: mock, method: "GET", path: "/v1/apps", fields: [], inputBody: nil,
-                paginate: false, limit: 10, pageSize: 200, confirm: false, dryRun: false,
-                audit: nil)
+                paginate: false, limit: 10, pageSize: 200, confirm: false, dryRun: false)
         }
         #expect(await mock.requests.isEmpty, "--limit is a pagination control, not a query param")
     }
 }
 
 @Suite("api command — mutations") struct APICommandMutationTests {
-    private func tempAuditTrail() -> APIAuditTrail {
-        APIAuditTrail(
-            fileURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("appctl-test-\(UUID().uuidString)/audit.log"))
+    /// Mirrors the composition root: the mock wrapped in the auditing decorator,
+    /// logging into a throwaway directory.
+    private func auditedClient(
+        wrapping mock: MockAppStoreConnectClient, command: String = "api test"
+    ) -> (client: AuditingClient, directory: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("appctl-test-\(UUID().uuidString)/audit")
+        let client = AuditingClient(
+            wrapping: mock, log: AuditLog(directory: directory), command: command)
+        return (client, directory)
     }
 
     @Test func postBuildsJSONAPIBodyFromFields() async throws {
@@ -133,7 +138,7 @@ private let base = "https://api.appstoreconnect.apple.com"
             client: mock, method: "POST", path: "/v1/betaGroups",
             fields: ["name=External", "publicLinkEnabled:=true", "publicLinkLimit:=25"],
             inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-            confirm: false, dryRun: false, audit: tempAuditTrail())
+            confirm: false, dryRun: false)
 
         let requests = await mock.requests
         try #require(requests.count == 1)
@@ -155,7 +160,7 @@ private let base = "https://api.appstoreconnect.apple.com"
         _ = try await APICommand.execute(
             client: mock, method: "PATCH", path: "/v1/betaGroups/bg-1", fields: ["name=Renamed"],
             inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-            confirm: false, dryRun: false, audit: tempAuditTrail())
+            confirm: false, dryRun: false)
 
         let body = try jsonObject((await mock.requests)[0].body)
         let data = nested(body, "data")
@@ -171,8 +176,7 @@ private let base = "https://api.appstoreconnect.apple.com"
 
         _ = try await APICommand.execute(
             client: mock, method: "POST", path: "/v1/betaGroups", fields: [], inputBody: input,
-            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false,
-            audit: tempAuditTrail())
+            paginate: false, limit: nil, pageSize: 200, confirm: false, dryRun: false)
 
         let body = try jsonObject((await mock.requests)[0].body)
         let appRef = nested(body, "data", "relationships", "app", "data")
@@ -185,67 +189,66 @@ private let base = "https://api.appstoreconnect.apple.com"
             _ = try await APICommand.execute(
                 client: mock, method: "POST", path: "/v1/betaGroups", fields: ["name=X"],
                 inputBody: Data("{}".utf8), paginate: false, limit: nil, pageSize: 200,
-                confirm: false, dryRun: false, audit: nil)
+                confirm: false, dryRun: false)
         }
         #expect(await mock.requests.isEmpty)
     }
 
     @Test func deleteWithoutConfirmAbortsBeforeAnyRequest() async throws {
         let mock = MockAppStoreConnectClient()
-        let audit = tempAuditTrail()
+        let (client, directory) = auditedClient(wrapping: mock)
 
         await #expect(throws: AppctlError.self) {
             _ = try await APICommand.execute(
-                client: mock, method: "DELETE", path: "/v1/betaGroups/bg-1", fields: [],
+                client: client, method: "DELETE", path: "/v1/betaGroups/bg-1", fields: [],
                 inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-                confirm: false, dryRun: false, audit: audit)
+                confirm: false, dryRun: false)
         }
         #expect(await mock.requests.isEmpty, "refusal must happen before any request is issued")
         #expect(
-            !FileManager.default.fileExists(atPath: audit.fileURL.path),
+            !FileManager.default.fileExists(atPath: directory.path),
             "an aborted DELETE is not a mutation and must not be audited")
     }
 
     @Test func executedMutationWritesOneAuditLine() async throws {
         let mock = MockAppStoreConnectClient()
-        let audit = tempAuditTrail()
+        let (client, directory) = auditedClient(wrapping: mock, command: "api DELETE betaGroups/bg-1")
 
         let outcome = try await APICommand.execute(
-            client: mock, method: "DELETE", path: "/v1/betaGroups/bg-1", fields: [],
+            client: client, method: "DELETE", path: "/v1/betaGroups/bg-1", fields: [],
             inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-            confirm: true, dryRun: false, audit: audit)
+            confirm: true, dryRun: false)
 
         #expect(outcome.document == .null, "a 204 DELETE has no document")
         let requests = await mock.requests
         try #require(requests.count == 1)
         #expect(requests[0].method == "DELETE")
 
-        let contents = try #require(FileManager.default.contents(atPath: audit.fileURL.path))
-        let lines = String(decoding: contents, as: UTF8.self)
-            .split(separator: "\n").map(String.init)
-        try #require(lines.count == 1)
-        let entry = try jsonObject(Data(lines[0].utf8))
-        #expect(entry["command"] as? String == "api")
-        #expect(entry["method"] as? String == "DELETE")
-        #expect(entry["url"] as? String == "\(base)/v1/betaGroups/bg-1")
-        #expect(entry["timestamp"] is String)
+        let (entries, malformed) = try AuditLog.readEntries(in: directory)
+        #expect(malformed == 0)
+        try #require(entries.count == 1)
+        #expect(entries[0].command == "api DELETE betaGroups/bg-1")
+        #expect(entries[0].method == "DELETE")
+        #expect(entries[0].endpoint == "/v1/betaGroups/bg-1")
+        #expect(entries[0].resourceType == "betaGroups")
+        #expect(entries[0].resourceId == "bg-1")
     }
 
     @Test func dryRunPreviewsWithoutExecutingOrAuditing() async throws {
         let mock = MockAppStoreConnectClient()
-        let audit = tempAuditTrail()
+        let (client, directory) = auditedClient(wrapping: mock)
 
         let outcome = try await APICommand.execute(
-            client: mock, method: "POST", path: "/v1/betaGroups", fields: ["name=X"],
+            client: client, method: "POST", path: "/v1/betaGroups", fields: ["name=X"],
             inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-            confirm: false, dryRun: true, audit: audit)
+            confirm: false, dryRun: true)
 
         #expect(await mock.requests.isEmpty)
         #expect(!outcome.executed)
         #expect(outcome.document["dryRun"] == .bool(true))
         #expect(outcome.document["method"]?.string == "POST")
         #expect(outcome.document["body"]?["data"]?["attributes"]?["name"] == .string("X"))
-        #expect(!FileManager.default.fileExists(atPath: audit.fileURL.path))
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
     }
 }
 
@@ -278,7 +281,7 @@ private let base = "https://api.appstoreconnect.apple.com"
             _ = try await APICommand.execute(
                 client: mock, method: "GET", path: "/v1/apps", fields: ["limit:=5"],
                 inputBody: nil, paginate: false, limit: nil, pageSize: 200,
-                confirm: false, dryRun: false, audit: nil)
+                confirm: false, dryRun: false)
         }
     }
 }

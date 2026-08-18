@@ -89,9 +89,7 @@ public struct APICommand: AsyncParsableCommand {
         let outcome = try await Self.execute(
             client: client, method: method, path: path, fields: field, inputBody: inputBody,
             paginate: paginate, limit: limit, pageSize: pageSize,
-            confirm: confirm, dryRun: dryRun,
-            // Mock mode is a rehearsal: nothing real changed, so nothing is audited.
-            audit: globals.mock ? nil : APIAuditTrail())
+            confirm: confirm, dryRun: dryRun)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -155,7 +153,7 @@ public struct APICommand: AsyncParsableCommand {
     static func execute(
         client: any AppStoreConnectClient, method methodString: String, path: String,
         fields: [String], inputBody: Data?, paginate: Bool, limit: Int?, pageSize: Int,
-        confirm: Bool, dryRun: Bool, audit: APIAuditTrail?
+        confirm: Bool, dryRun: Bool
     ) async throws -> Outcome {
         guard let method = Method(rawValue: methodString.uppercased()) else {
             throw AppctlError.invalidInput(
@@ -216,17 +214,8 @@ public struct APICommand: AsyncParsableCommand {
             try await client.delete(fullURL)
             document = .null
         }
-
-        if method.isMutation, let audit {
-            do {
-                try audit.record(method: method.rawValue, url: fullURL)
-            } catch {
-                // The mutation already succeeded; failing the command now would
-                // mislead. Surface the audit problem without masking the result.
-                var stderr = StandardError.shared
-                print("⚠ Audit log write failed: \(error.localizedDescription)", to: &stderr)
-            }
-        }
+        // Mutations are audited by the AuditingClient wrapper the composition
+        // root installed, exactly like every typed command's.
         return Outcome(document: document, next: next, executed: true)
     }
 

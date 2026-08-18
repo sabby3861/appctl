@@ -324,14 +324,16 @@ struct GlobalOptions: ParsableArguments {
         let config = try resolvedConfig()
         let gen = try AuthStore.createGenerator(from: config)
         let effectiveTimeout = timeout ?? self.timeout ?? config.timeout
-        return (
-            APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: effectiveTimeout), config
-        )
+        let client = APIClient(jwtGenerator: gen, verbose: config.verbose, timeout: effectiveTimeout)
+        // Wrapping here — the composition root — is what makes the audit log a
+        // single seam over every mutation path instead of per-command wiring.
+        return (AuditingClient(wrapping: client), config)
     }
 
     /// Builds a client from candidate credentials that are not persisted anywhere
     /// yet (`init` validates before writing config), keeping concrete client
-    /// construction inside the composition root.
+    /// construction inside the composition root. Unwrapped: validation only reads,
+    /// so there is nothing to audit.
     func apiClient(candidate config: AppctlConfig) throws -> any AppStoreConnectClient {
         if mock { return FixtureClient() }
         let gen = try AuthStore.createGenerator(from: config)

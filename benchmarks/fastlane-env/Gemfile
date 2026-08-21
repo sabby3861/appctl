@@ -1,0 +1,6 @@
+# Pinned so the fastlane side of the benchmark is reproducible from a clean
+# clone. Gemfile.lock is committed; bump both together and re-run run.sh so the
+# recorded fastlane_version in results/ matches what is actually installed.
+source "https://rubygems.org"
+
+gem "fastlane", "~> 2.228"

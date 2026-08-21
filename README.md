@@ -7,7 +7,7 @@
 
 **The Swift CLI for App Store Connect. Zero Ruby. Zero friction.**
 
-A single, fast binary that replaces Fastlane's 67-gem Ruby toolchain. Talks directly to the App Store Connect API with three-part error diagnostics, automatic retry, and CI-ready output.
+A single, fast binary that replaces Fastlane's 101-gem Ruby toolchain for App Store Connect work. Talks directly to the App Store Connect API with three-part error diagnostics, automatic retry, and CI-ready output.
 
 See [ROADMAP.md](ROADMAP.md) for planned work.
 
@@ -49,11 +49,22 @@ appctl apps list
 
 | | Fastlane | appctl |
 |---|---|---|
-| Dependencies | 67 Ruby gems | **2 Apple SPM packages, statically linked** |
-| Cold start | ~2 minutes | **Instant** |
+| Dependencies | 101 Ruby gems | **3 SwiftPM packages** |
+| Startup | 1.06 s | **10 ms** |
+| Peak memory | 93 MB | **7.9 MB** |
 | Xcode breakage | Every release | **API only** |
 | Error messages | "Exit status: 65" | **What/Why/Fix** |
 | One-command release | No | **Yes** |
+
+Every number above is measured, not asserted: see [benchmarks/](benchmarks/README.md),
+which is generated from the raw per-iteration runs committed alongside it. Startup and
+memory are medians of 15 runs on one machine with a warm cache — treat the order of
+magnitude as the result and the exact figure as incidental. Dependency counts are full
+transitive closures.
+
+**What this does not claim:** appctl is not faster than Fastlane at building or signing,
+because it does not build or sign. It has no compile step, no `gym`, no `match`, no ipa
+upload. The comparison covers App Store Connect API work and process startup only.
 
 ## Configuration
 

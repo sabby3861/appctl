@@ -1,0 +1,26 @@
+# Benchmark lanes for the appctl-vs-fastlane comparison in ../../run.sh.
+#
+# These lanes call Spaceship directly rather than shelling out to another tool,
+# so no extra process launch is charged against fastlane's measured time. Each
+# lane must fetch the same data as the appctl command it is paired with.
+
+before_all do
+  # Both tools authenticate with the same key, so the comparison isolates the
+  # client and not the account. run.sh gates these lanes on the same variables;
+  # reaching here without them means the harness let something through, and a
+  # benchmark that silently times an auth failure is worse than no benchmark.
+  %w[APPCTL_KEY_ID APPCTL_ISSUER_ID APPCTL_PRIVATE_KEY_PATH].each do |name|
+    next unless ENV[name].to_s.empty?
+    UI.user_error!("#{name} is unset — run this lane through benchmarks/run.sh.")
+  end
+end
+
+desc "Fetch every app visible to the API key. Paired with `appctl apps list`."
+lane :apps_list do
+  Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+    key_id: ENV.fetch("APPCTL_KEY_ID"),
+    issuer_id: ENV.fetch("APPCTL_ISSUER_ID"),
+    filepath: File.expand_path(ENV.fetch("APPCTL_PRIVATE_KEY_PATH"))
+  )
+  UI.message("Fetched #{Spaceship::ConnectAPI::App.all.count} apps")
+end

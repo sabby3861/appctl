@@ -1,0 +1,4 @@
+# Installed gems are reproduced from the committed Gemfile.lock, not committed.
+fastlane-env/vendor/
+fastlane-env/fastlane/report.xml
+fastlane-env/fastlane/README.md
